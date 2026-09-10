@@ -20,6 +20,12 @@ Operational notes
 *   **The reference transcript matters.** The model conditions on ``ref_text``;
     supplying the wrong transcript degrades the clone badly. Enrolment stores a
     verified transcript for exactly this reason.
+*   **Meta-device initialisation must be off.** The bundled code constructs its
+    vocoder inside ``__init__`` and moves it to the device, which cannot work
+    if transformers allocated the parameters on the meta device. ``load``
+    therefore passes ``low_cpu_mem_usage=False``. This is the reason the
+    ``transformers`` bound matters as much as it does: the model's code assumes
+    loading behaviour that the library has since changed.
 *   **``trust_remote_code`` is required**, because the model ships custom
     modelling code. That is remote code execution by design, so the revision is
     pinned: :class:`~mlvoice.config.Settings` refuses an unpinned revision in
@@ -122,6 +128,15 @@ class IndicF5Synthesizer(Synthesizer):
                 self._model_id,
                 revision=self._revision,
                 trust_remote_code=True,
+                # Recent transformers builds the model on the meta device by
+                # default, materialising weights afterwards. That is fine for a
+                # plain nn.Module, but IndicF5's remote code constructs its
+                # vocos vocoder inside __init__ and then calls .to(device) on
+                # it. Under meta init the vocoder's parameters have no storage,
+                # so the move fails with "Cannot copy out of meta tensor".
+                # Disabling the fast path makes the constructor allocate real
+                # tensors, which is what the model's code assumes.
+                low_cpu_mem_usage=False,
             )
             self._model = model.to(torch.device(self._device)).eval()
         except Exception as exc:
@@ -202,6 +217,14 @@ def _load_failure_hint(reason: str, model_id: str) -> str | None:
             f"{model_id} is a gated repository: request access on its model "
             "page, then authenticate with `hf auth login` or set HF_TOKEN for "
             "the account that was granted access"
+        )
+    if "meta tensor" in lowered or "to_empty" in lowered:
+        return (
+            "the model's remote code builds its vocoder during __init__, which "
+            "breaks under transformers' meta-device initialisation. This "
+            "backend passes low_cpu_mem_usage=False for that reason; if the "
+            "error persists, the installed transformers is too new for the "
+            "model's bundled code -- try `pip install 'transformers<4.50'`"
         )
     match = _MISSING_DEPS.search(reason)
     if match:

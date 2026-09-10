@@ -85,6 +85,23 @@ class TestLoadFailures:
         assert "pydub" in hint
         assert "mlvoice[indicf5]" in hint
 
+    def test_meta_tensor_failure_explains_the_cause(self) -> None:
+        """The model builds its vocoder in __init__, which meta-device init
+        breaks. The message names neither the model nor the remedy."""
+        message = (
+            "Cannot copy out of meta tensor; no data! Please use "
+            "torch.nn.Module.to_empty() instead of torch.nn.Module.to()"
+        )
+        with (
+            patch.dict(sys.modules, _stub_modules(NotImplementedError(message))),
+            pytest.raises(BackendUnavailableError) as excinfo,
+        ):
+            IndicF5Synthesizer(revision="abc123").load()
+        hint = excinfo.value.context.get("hint")
+        assert hint is not None
+        assert "vocoder" in hint
+        assert "transformers" in hint
+
     def test_unrelated_errors_get_no_misleading_hint(self) -> None:
         with (
             patch.dict(sys.modules, _stub_modules(OSError("No space left on device"))),
@@ -110,6 +127,33 @@ class TestLoadFailures:
             pytest.raises(BackendUnavailableError, match="models"),
         ):
             IndicF5Synthesizer().load()
+
+
+class TestLoadArguments:
+    def test_meta_device_initialisation_is_disabled(self) -> None:
+        """Regression: the default fast path allocates on the meta device, and
+        the model's own code then fails to move its vocoder off it."""
+        captured: dict[str, object] = {}
+
+        torch_stub = types.ModuleType("torch")
+        torch_stub.device = lambda name: name  # type: ignore[attr-defined]
+
+        class RecordingAutoModel:
+            @staticmethod
+            def from_pretrained(*args: object, **kwargs: object) -> object:
+                captured.update(kwargs)
+                raise OSError("stop here")
+
+        transformers_stub = types.ModuleType("transformers")
+        transformers_stub.AutoModel = RecordingAutoModel  # type: ignore[attr-defined]
+
+        stubs = {"torch": torch_stub, "transformers": transformers_stub}
+        with patch.dict(sys.modules, stubs), pytest.raises(BackendUnavailableError):
+            IndicF5Synthesizer(revision="abc123").load()
+
+        assert captured["low_cpu_mem_usage"] is False
+        assert captured["trust_remote_code"] is True
+        assert captured["revision"] == "abc123"
 
 
 class TestSynthesisGuards:
