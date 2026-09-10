@@ -66,9 +66,7 @@ class TestTranscription:
         with patch.dict(sys.modules, _stubs(self._transcriber(recorded))):
             assert transcriber.transcribe(clip) == "ഇത് ഒരു പരീക്ഷണം"
 
-    def test_audio_is_resampled_for_the_model(
-        self, recorded: dict[str, Any], clip: Audio
-    ) -> None:
+    def test_audio_is_resampled_for_the_model(self, recorded: dict[str, Any], clip: Audio) -> None:
         """Whisper and the conformer families all expect 16 kHz."""
         assert clip.sample_rate != ASR_MODEL_SAMPLE_RATE
         with patch.dict(sys.modules, _stubs(self._transcriber(recorded))):
@@ -81,9 +79,7 @@ class TestTranscription:
             TransformersTranscriber(language="ml").transcribe(clip)
         assert recorded["call_kwargs"]["generate_kwargs"] == {"language": "ml"}
 
-    def test_language_hint_can_be_omitted(
-        self, recorded: dict[str, Any], clip: Audio
-    ) -> None:
+    def test_language_hint_can_be_omitted(self, recorded: dict[str, Any], clip: Audio) -> None:
         with patch.dict(sys.modules, _stubs(self._transcriber(recorded))):
             TransformersTranscriber(language=None).transcribe(clip)
         assert recorded["call_kwargs"] == {}
