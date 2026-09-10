@@ -108,6 +108,65 @@ class TestSpeak:
         assert output.exists()
         assert load_audio(output).duration_seconds > 0.1
 
+    def test_text_can_come_from_a_file(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Long-form input should not go through shell quoting: a mis-quoted
+        700-character Malayalam script is hard to spot."""
+        script = tmp_path / "script.txt"
+        script.write_text(
+            "ഹലോ ഗയ്സ്! ഇത് ഒരു നീണ്ട വാക്യം ആണ്.\n\nഇത് രണ്ടാമത്തെ ഖണ്ഡിക ആണ്.",
+            encoding="utf-8",
+        )
+        output = tmp_path / "out.wav"
+        result = runner.invoke(app, ["speak", "--file", str(script), "-o", str(output)])
+        assert result.exit_code == 0, result.stdout
+        assert output.exists()
+        assert json.loads(result.stdout)["chunks"] >= 1
+
+    def test_text_can_come_from_stdin(self, runner: CliRunner, tmp_path: Path) -> None:
+        output = tmp_path / "out.wav"
+        result = runner.invoke(
+            app, ["speak", "-o", str(output)], input="ഞാൻ നാട്ടിൽ പോയി"
+        )
+        assert result.exit_code == 0, result.stdout
+        assert output.exists()
+
+    def test_reference_transcript_can_come_from_a_file(
+        self, runner: CliRunner, tmp_path: Path, speech: SpeechFactory
+    ) -> None:
+        reference = tmp_path / "ref.wav"
+        save_audio(speech(words=12), reference)
+        transcript = tmp_path / "ref.txt"
+        transcript.write_text("ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്", encoding="utf-8")
+        output = tmp_path / "out.wav"
+        result = runner.invoke(
+            app,
+            [
+                "speak", "ഞാൻ പോയി", "-o", str(output),
+                "--reference-audio", str(reference),
+                "--reference-text-file", str(transcript),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert output.exists()
+
+    def test_both_transcript_sources_is_rejected(
+        self, runner: CliRunner, tmp_path: Path, speech: SpeechFactory
+    ) -> None:
+        reference = tmp_path / "ref.wav"
+        save_audio(speech(words=12), reference)
+        transcript = tmp_path / "ref.txt"
+        transcript.write_text("x", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "speak", "ഞാൻ പോയി", "-o", str(tmp_path / "o.wav"),
+                "--reference-audio", str(reference),
+                "--reference-text", "y",
+                "--reference-text-file", str(transcript),
+            ],
+        )
+        assert result.exit_code != 0
+
     def test_reference_flags_must_come_together(
         self, runner: CliRunner, tmp_path: Path, speech: SpeechFactory
     ) -> None:

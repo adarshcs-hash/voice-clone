@@ -231,7 +231,17 @@ def text_number(value: int) -> None:
 
 @app.command()
 def speak(
-    text: Annotated[str, typer.Argument()],
+    text: Annotated[str | None, typer.Argument()] = None,
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="Read the text to speak from a file. Preferred for long-form "
+            "input: paragraph breaks and Malayalam punctuation survive intact "
+            "instead of going through shell quoting.",
+        ),
+    ] = None,
     output: Annotated[Path, typer.Option("--output", "-o")] = Path("out.wav"),
     reference_audio: Annotated[
         Path | None,
@@ -240,14 +250,24 @@ def speak(
     reference_text: Annotated[
         str | None, typer.Option(help="Verbatim transcript of the reference clip.")
     ] = None,
+    reference_text_file: Annotated[
+        Path | None,
+        typer.Option(exists=True, dir_okay=False, help="Read the transcript from a file."),
+    ] = None,
     speed: float = 1.0,
     seed: int | None = None,
 ) -> None:
     """Synthesise text to a WAV file.
 
-    Cloning from a local clip requires both ``--reference-audio`` and
-    ``--reference-text``: the backend conditions on the transcript, and a wrong
-    one degrades the clone.
+    Text comes from the argument, ``--file``, or standard input. Long-form input
+    should use ``--file``: shell quoting mangles paragraph breaks, and a
+    mis-quoted 700-character Malayalam script is hard to spot.
+
+    Cloning from a local clip requires both ``--reference-audio`` and a
+    transcript (``--reference-text`` or ``--reference-text-file``). The
+    transcript must be what the reference recording *already says*, not the text
+    being generated: the backend aligns the two, and a mismatch clones the voice
+    correctly while garbling the words.
     """
     from mlvoice.audio.io import load_audio, save_audio
     from mlvoice.config import get_settings
@@ -255,8 +275,16 @@ def speak(
     from mlvoice.tts.base import ReferencePrompt, SynthesisRequest
     from mlvoice.tts.registry import build_synthesizer
 
+    source_text = _read_text(text, file)
+    if reference_text_file is not None:
+        if reference_text is not None:
+            raise typer.BadParameter("give --reference-text or --reference-text-file, not both")
+        reference_text = reference_text_file.read_text(encoding="utf-8").strip()
     if bool(reference_audio) != bool(reference_text):
-        raise typer.BadParameter("--reference-audio and --reference-text must be given together")
+        raise typer.BadParameter(
+            "--reference-audio and a transcript (--reference-text or "
+            "--reference-text-file) must be given together"
+        )
 
     settings = get_settings()
     synthesizer = build_synthesizer(settings)
@@ -271,7 +299,7 @@ def speak(
         )
         for note in prompt.advisories():
             typer.secho(f"warning: {note}", fg=typer.colors.YELLOW, err=True)
-        if reference_text.strip() == text.strip():
+        if reference_text.strip() == source_text.strip():
             typer.secho(
                 "warning: --reference-text is identical to the text being "
                 "generated. It should be the transcript of --reference-audio, "
@@ -281,7 +309,7 @@ def speak(
                 err=True,
             )
 
-    processed = TextPipeline().process(text)
+    processed = TextPipeline().process(source_text)
     result = synthesizer.synthesize(
         SynthesisRequest(text=processed, prompt=prompt, speed=speed, seed=seed)
     )
