@@ -53,6 +53,43 @@ class TestReferencePrompt:
         assert prompt.voice_id == "v1"
 
 
+class TestTranscriptPlausibility:
+    """A transcript describing different words than the recording clones the
+    timbre correctly and garbles the words -- the most confusing failure this
+    API has, because the voice sounds right. The usual cause is passing the
+    text to be generated as the reference transcript, which is detectable
+    because the lengths stop matching."""
+
+    @staticmethod
+    def _prompt(chars: int, seconds: float) -> ReferencePrompt:
+        audio = Audio(samples=np.zeros(int(24_000 * seconds), dtype=np.float32), sample_rate=24_000)
+        return ReferencePrompt(audio=audio, text="അ" * chars, voice_id="v")
+
+    def test_plausible_rate_gives_no_warning(self) -> None:
+        assert self._prompt(85, 8.0).transcript_warning() is None
+        assert self._prompt(60, 5.0).transcript_warning() is None
+
+    def test_transcript_too_long_for_the_audio(self) -> None:
+        warning = self._prompt(85, 3.0).transcript_warning()
+        assert warning is not None
+        assert "faster than Malayalam is spoken" in warning
+        assert "not the text you want" in warning
+
+    def test_transcript_too_short_for_the_audio(self) -> None:
+        warning = self._prompt(10, 8.0).transcript_warning()
+        assert warning is not None
+        assert "slower than Malayalam is spoken" in warning
+
+    def test_rate_is_computed(self) -> None:
+        assert self._prompt(80, 8.0).chars_per_second == pytest.approx(10.0)
+
+    def test_warning_never_blocks_synthesis(self) -> None:
+        """An unusual rate is possible; refusing a legitimate request is worse."""
+        prompt = self._prompt(200, 3.0)
+        assert prompt.transcript_warning() is not None
+        assert prompt.voice_id == "v"  # constructed successfully regardless
+
+
 class TestSynthesisRequest:
     def test_speed_bounds(self, pipeline: TextPipeline) -> None:
         processed = pipeline.process("നാട്")

@@ -48,6 +48,15 @@ __all__ = [
 MIN_REFERENCE_SECONDS: Final = 2.0
 MAX_REFERENCE_SECONDS: Final = 30.0
 
+# Plausible Malayalam speaking rate in orthographic characters per second.
+# Malayalam averages roughly four to five syllables a second, and a syllable
+# runs one to three characters (consonant, optional vowel sign, optional
+# chandrakkala), so normal speech lands around 8-12. The band here is
+# deliberately wide: it exists to catch a transcript that describes *different
+# words* than the audio, not to police delivery.
+MIN_PLAUSIBLE_CHARS_PER_SECOND: Final = 4.0
+MAX_PLAUSIBLE_CHARS_PER_SECOND: Final = 25.0
+
 
 @dataclass(frozen=True, slots=True)
 class ReferencePrompt:
@@ -64,6 +73,47 @@ class ReferencePrompt:
     audio: Audio
     text: str
     voice_id: str
+
+    @property
+    def chars_per_second(self) -> float:
+        """Transcript length divided by reference duration.
+
+        A reference-based model aligns the audio against the transcript, so a
+        transcript describing different words than the recording produces
+        garbled output *while cloning the timbre correctly* -- the most
+        confusing failure this API has, because the voice sounds right.
+
+        The commonest cause is passing the text to be generated as the
+        reference transcript. That is usually detectable: the two lengths stop
+        matching.
+        """
+        duration = self.audio.duration_seconds
+        return len(self.text.strip()) / duration if duration > 0 else float("inf")
+
+    def transcript_warning(self) -> str | None:
+        """Describe an implausible transcript-to-audio ratio, if there is one.
+
+        Returns ``None`` when the ratio is plausible. This is a warning rather
+        than a validation error: an unusual rate is possible, and refusing a
+        legitimate request would be worse than a caveat.
+        """
+        rate = self.chars_per_second
+        if rate > MAX_PLAUSIBLE_CHARS_PER_SECOND:
+            return (
+                f"the reference transcript is {len(self.text.strip())} characters for "
+                f"{self.audio.duration_seconds:.1f}s of audio ({rate:.0f} chars/sec), "
+                "which is faster than Malayalam is spoken. The transcript must be "
+                "what the reference recording already says -- not the text you want "
+                "generated. A mismatch clones the voice correctly and garbles the words"
+            )
+        if rate < MIN_PLAUSIBLE_CHARS_PER_SECOND:
+            return (
+                f"the reference transcript is only {len(self.text.strip())} characters "
+                f"for {self.audio.duration_seconds:.1f}s of audio ({rate:.1f} chars/sec), "
+                "which is slower than Malayalam is spoken. If the recording says more "
+                "than the transcript, trim the audio or complete the transcript"
+            )
+        return None
 
     def __post_init__(self) -> None:
         if not self.text.strip():

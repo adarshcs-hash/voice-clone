@@ -269,6 +269,18 @@ def speak(
             text=reference_text,
             voice_id="cli-reference",
         )
+        warning = prompt.transcript_warning()
+        if warning is not None:
+            typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW, err=True)
+        if reference_text.strip() == text.strip():
+            typer.secho(
+                "warning: --reference-text is identical to the text being "
+                "generated. It should be the transcript of --reference-audio, "
+                "not the target text; if they differ, the voice clones but the "
+                "words garble.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
 
     processed = TextPipeline().process(text)
     result = synthesizer.synthesize(
