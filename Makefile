@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint fmt typecheck test test-all cov serve docker clean
+.PHONY: help install install-dev lint fmt typecheck test test-all test-browser cov serve docker clean
 
 PY ?= .venv/bin/python
 PIP ?= .venv/bin/pip
@@ -31,6 +31,11 @@ test: ## Fast suite (no model weights required)
 
 test-all: ## Full suite including model-dependent tests
 	$(PY) -m pytest
+
+test-browser: ## Drive the web client in a real browser
+	$(PIP) install -e ".[dev,browser]"
+	$(PY) -m playwright install chromium
+	$(PY) -m pytest -m browser
 
 cov: ## Coverage report
 	$(PY) -m pytest -m "not slow" --cov --cov-report=term-missing --cov-report=xml

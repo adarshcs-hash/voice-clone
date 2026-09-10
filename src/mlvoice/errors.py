@@ -40,6 +40,18 @@ class ConfigurationError(MlvoiceError):
     http_status = 500
 
 
+class FeatureDisabledError(MlvoiceError):
+    """An optional feature is switched off in this deployment.
+
+    404 rather than 403: a disabled feature should be indistinguishable from
+    one that was never deployed, so that turning the web client off does not
+    advertise that a web client exists.
+    """
+
+    code = "feature_disabled"
+    http_status = 404
+
+
 class ValidationError(MlvoiceError):
     """Caller-supplied input is malformed or out of bounds."""
 

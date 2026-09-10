@@ -33,6 +33,7 @@ def index() -> dict[str, str]:
     return {
         "service": "mlvoice",
         "version": __version__,
+        "ui": "/ui",
         "docs": "/docs",
         "openapi": "/openapi.json",
         "health": "/healthz",

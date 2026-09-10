@@ -24,7 +24,7 @@ from fastapi import FastAPI
 from mlvoice.__version__ import __version__
 from mlvoice.api.middleware import RequestContextMiddleware, install_exception_handlers
 from mlvoice.api.ratelimit import InMemoryRateLimiter, RateLimiter
-from mlvoice.api.routes import health, tts, voices
+from mlvoice.api.routes import health, tts, ui, voices
 from mlvoice.asr import build_transcriber
 from mlvoice.config import Settings, get_settings
 from mlvoice.errors import ConfigurationError
@@ -291,4 +291,5 @@ def create_app(overrides: Overrides | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(tts.router)
     app.include_router(voices.router)
+    app.include_router(ui.router)
     return app

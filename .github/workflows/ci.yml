@@ -75,6 +75,51 @@ jobs:
           path: coverage.xml
           if-no-files-found: error
 
+  web-client:
+    name: web client (browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install system audio libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsndfile1
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,browser]"
+
+      - name: Install Chromium
+        # --with-deps pulls the shared libraries a headless Chromium needs on a
+        # bare runner. Its own job because it is a download the rest of CI has
+        # no use for.
+        run: python -m playwright install --with-deps chromium
+
+      - name: Chromium is really there
+        # The browser tests skip themselves when no browser is installed, which
+        # is right for a contributor and wrong for CI: a failed download would
+        # turn this job green while testing nothing.
+        run: |
+          python - <<'EOF'
+          import pathlib, sys
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as playwright:
+              path = pathlib.Path(playwright.chromium.executable_path)
+          sys.exit(0 if path.exists() else f"chromium missing at {path}")
+          EOF
+
+      - name: Drive the client in a browser
+        # These are what catch a dead button: the static tests prove the
+        # script's element ids exist, not that clicking anything works.
+        run: pytest -m browser
+
   docker:
     name: docker build
     runs-on: ubuntu-latest

@@ -52,6 +52,23 @@ Add cases to `eval/testset.py`. Ids are stable and referenced by report
 history — add new ones, never renumber. Set `expected_text` wherever the
 frontend has exactly one correct output; those become automatic gates.
 
+## Changing the web client
+
+`src/mlvoice/api/static/` is the whole client: one HTML file and one script,
+no build step. Two rules keep it honest.
+
+Element ids are a contract. `tests/unit/test_ui.py` checks that every id the
+script looks up exists in the page, that the fields it posts are the ones the
+endpoints accept, and that the response fields it reads are in the schemas — a
+rename that breaks any of those fails there rather than as a button that does
+nothing.
+
+Never write caller text through `innerHTML`. The preview echoes what the user
+typed back into the page; `textContent` and DOM construction only.
+
+Run `make test-browser` for anything behavioural. It skips without a browser,
+so a green `make check` is not evidence that a handler works.
+
 ## Commit and pull-request style
 
 One logical change per commit. In the pull request, say what behaviour changed

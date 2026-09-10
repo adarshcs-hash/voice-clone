@@ -95,7 +95,7 @@ class TestIndicF5Pins:
 class TestExtraShape:
     def test_declared_extras(self, pyproject: dict[str, Any]) -> None:
         extras = set(pyproject["project"]["optional-dependencies"])
-        assert extras == {"models", "indicf5", "data", "eval", "speaker", "dev"}
+        assert extras == {"models", "indicf5", "data", "eval", "speaker", "browser", "dev"}
 
     def test_runtime_dependencies_carry_no_model_runtime(self, pyproject: dict[str, Any]) -> None:
         """The text frontend and the service must install without torch."""

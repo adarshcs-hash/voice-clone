@@ -181,6 +181,7 @@ the whole utterance — and the response says so in `X-Watermarked: false`.
 | `POST /v1/tts` | Synthesise; returns a watermarked WAV |
 | `POST /v1/tts/stream` | Chunked WAV stream, low time-to-first-byte |
 | `POST /v1/text/analyze` | Every frontend stage — answers "why did it say that?" |
+| `POST /v1/transcribe` | Transcribe a clip — used to fill in the reference transcript |
 | `POST /v1/voices/challenge` | Issue a consent challenge |
 | `POST /v1/voices` | Enrol a voice |
 | `GET /v1/voices`, `GET /v1/voices/{id}` | List and read voices |
@@ -188,10 +189,38 @@ the whole utterance — and the response says so in `X-Watermarked: false`.
 | `POST /v1/consents/{id}/revoke` | Revoke consent (cascades) |
 | `POST /v1/watermark/detect` | Provenance check |
 | `GET /healthz`, `GET /readyz`, `GET /v1/info` | Liveness, readiness, capabilities |
+| `GET /ui` | Browser client |
 
 `/readyz` returns 503 until the model has loaded, so a rolling deploy never
 routes into a cold replica. Every response carries `X-Request-Id`, and every log
 line emitted while handling that request carries the same id.
+
+## Web client
+
+`GET /ui` serves a single page — no build step, no CDN, no framework, just an
+HTML file and a script the API process itself hands out. Upload or record a
+voice, record the consent sentence, and type what it should say.
+
+Two decisions shape it:
+
+**The reference transcript is transcribed, not typed.** Cloning needs to know
+what the reference clip *says*, and asking a user to type that out is both a bad
+first impression and the source of the worst failure this system has: type the
+text you want *generated* instead of the words in the clip, and you get a
+perfect clone of the voice saying something between the two. So the page uploads
+the clip to `POST /v1/transcribe`, fills the field in, and asks only that you
+correct it — with the field labelled "what the reference clip says" to make the
+distinction hard to miss. If transcription is unavailable the field stays
+editable and the page says so, rather than failing.
+
+**The browser converts audio, not the server.** Every clip goes through
+`AudioContext.decodeAudioData` and comes out 16-bit PCM WAV before it is
+uploaded. One code path covers a phone's `.m4a`, an `.mp3`, and the WebM/Opus a
+`MediaRecorder` produces, and the server needs no codec beyond libsndfile —
+server-side conversion would mean shipping ffmpeg in the image.
+
+The page also exposes `POST /v1/text/analyze`, so you can see the chunks and
+phonemes the model will actually be given before paying for a generation.
 
 ## Corpus preparation
 
@@ -250,7 +279,10 @@ make docker
 
 `ruff` and `mypy --strict` are clean; the fast test suite needs no model weights
 and no network. Tests that require weights are marked `slow` and excluded by
-default. Current state: **529 tests, 95% branch coverage**.
+default. `make test-browser` drives the web client in a real Chromium — those
+tests are marked `browser` and skip themselves when no browser is installed,
+so they never fail a contributor who does not want the download. Current state:
+**653 tests, 94% branch coverage**.
 
 ## What is honest about this
 

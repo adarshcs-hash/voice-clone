@@ -108,6 +108,14 @@ class Settings(BaseSettings):
     blocked_voice_names_file: Path | None = None
     """Newline-delimited names refused at enrolment (public figures)."""
 
+    # -- web ui -------------------------------------------------------------
+    ui_enabled: bool = True
+    """Serve the browser client at ``/ui``.
+
+    The page itself holds no secrets and every call it makes still needs an API
+    key, but a public deployment may prefer not to advertise a cloning console
+    at a guessable path."""
+
     @field_validator("api_keys")
     @classmethod
     def _strip_keys(cls, value: SecretStr) -> SecretStr:

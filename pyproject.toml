@@ -108,6 +108,13 @@ speaker = [
   "torchaudio>=2.4",
   "speechbrain>=1.0",
 ]
+# Drives the web client in a real browser. Separate from `dev` because the
+# package is only half of it -- `playwright install chromium` downloads a
+# browser -- and the tests skip themselves when it is absent, so a contributor
+# who does not want a 150 MB download still gets a green suite.
+browser = [
+  "playwright>=1.44",
+]
 dev = [
   "pytest>=8.3",
   "pytest-cov>=5.0",
@@ -217,6 +224,7 @@ testpaths = ["tests"]
 markers = [
   "slow: requires model weights or GPU; excluded from the default run",
   "integration: exercises the assembled service",
+  "browser: drives the web client in a real browser; needs the `browser` extra",
 ]
 filterwarnings = ["error::DeprecationWarning:mlvoice.*"]
 

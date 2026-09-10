@@ -52,6 +52,23 @@ that for a production image: none of it is reached by the inference path, and
 shipping a demo UI and a telemetry client inside a synthesis service is worth
 avoiding.
 
+## The web client
+
+`GET /ui` serves the browser client from the API process itself: an HTML file
+and a script, no build step and no CDN, so it works on an air-gapped host. It
+is unauthenticated because it contains nothing but the form that collects the
+API key -- every request it makes still carries `X-API-Key` and is rate-limited
+like any other caller.
+
+Set `MLVOICE_UI_ENABLED=false` to switch it off. Both paths then return 404
+rather than 403, so a disabled console is indistinguishable from one that was
+never deployed. Consider that for an internet-facing deployment: the page is
+harmless, but it does advertise that this host clones voices.
+
+The page is served `no-store` and the script `max-age=3600`. That asymmetry is
+deliberate -- a cached page outliving a redeploy would bind element ids the new
+script no longer looks up, which fails as dead buttons rather than as an error.
+
 ## Health and rollout
 
 | Endpoint | Meaning |
