@@ -113,9 +113,9 @@ async def enroll_voice(
     service: Annotated[EnrollmentService, Depends(get_enrollment_service)],
     caller: Annotated[Caller, Depends(rate_limit)],
     name: Annotated[str, Form(min_length=1, max_length=200)],
-    consent_token: Annotated[str, Form(min_length=1)],
     reference_audio: Annotated[UploadFile, File()],
-    consent_audio: Annotated[UploadFile, File()],
+    consent_token: Annotated[str | None, Form()] = None,
+    consent_audio: Annotated[UploadFile | None, File()] = None,
     reference_text: Annotated[str | None, Form(max_length=4000)] = None,
     dialect: Annotated[str, Form()] = "unknown",
     gender: Annotated[str, Form()] = "unknown",
@@ -130,6 +130,13 @@ async def enroll_voice(
 
     Clients that can show the transcript should call ``POST /v1/transcribe``
     first and submit the corrected text, which is better than either extreme.
+
+    ``consent_token`` and ``consent_audio`` are optional in the signature and
+    required in practice: enrolment refuses without them unless
+    ``MLVOICE_REQUIRE_CONSENT`` is off, which production will not start with.
+    They are optional here rather than mandatory so that a deployment which has
+    turned consent off is not made to post a challenge it does not check --
+    ``GET /v1/info`` reports ``consent_required`` so a client knows which it is.
     """
     voice = service.enroll(
         EnrollmentRequest(
@@ -138,7 +145,11 @@ async def enroll_voice(
             reference_audio=await _read_upload(reference_audio, "reference_audio"),
             reference_text=reference_text,
             consent_token=consent_token,
-            consent_audio=await _read_upload(consent_audio, "consent_audio"),
+            consent_audio=(
+                await _read_upload(consent_audio, "consent_audio")
+                if consent_audio is not None
+                else None
+            ),
             dialect=dialect,
             gender=gender,
         )

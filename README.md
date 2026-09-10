@@ -158,6 +158,20 @@ This is not identity verification — it proves the same person recorded both
 clips, not who that person is. See
 [`docs/safety-and-compliance.md`](docs/safety-and-compliance.md).
 
+### Cloning your own voice
+
+`MLVOICE_REQUIRE_CONSENT=false` skips the challenge: enrolment then accepts a
+reference clip on its own, and the web client drops that step from the page
+(`GET /v1/info` reports `consent_required`, so a client can tell). It is for
+one case — your own voice, on a machine you control — and **production refuses
+to start with it off**.
+
+The cost is recorded, not hidden. Such a voice has no consent record and
+reports `consent_verified: false` for the rest of its life; there is no way to
+attach consent afterwards, because a challenge signed later would not be
+evidence of anything. Turning consent back on does not retroactively bless
+what was enrolled while it was off.
+
 ## Provenance
 
 Every clip returned by `POST /v1/tts` carries a watermark whose payload is a key

@@ -511,6 +511,106 @@ class TestVoiceLifecycle:
         assert response.status_code == 422
 
 
+class TestConsentIsRequiredUnlessTurnedOff:
+    """Enrolment without a consent recording: refused, unless configured off.
+
+    The endpoint takes ``consent_token`` and ``consent_audio`` as optional
+    fields so that a deployment which has switched consent off is not made to
+    post a challenge nobody checks. Optional in the signature must not mean
+    optional in effect, which is what these pin down.
+    """
+
+    def test_enrolment_without_consent_is_refused_by_default(
+        self, client: TestClient, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        response = client.post(
+            "/v1/voices",
+            headers=auth,
+            data={"name": "Rajan", "reference_text": "ഇത് എന്റെ ശബ്ദം ആണ്"},
+            files={"reference_audio": ("r.wav", reference_bytes, "audio/wav")},
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "consent_required"
+
+    def test_a_token_without_a_recording_is_refused(
+        self, client: TestClient, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        """Half a consent record is not consent."""
+        challenge = client.post(
+            "/v1/voices/challenge", json={"subject_name": "രാജൻ"}, headers=auth
+        ).json()
+        response = client.post(
+            "/v1/voices",
+            headers=auth,
+            data={
+                "name": "Rajan",
+                "reference_text": "ഇത് എന്റെ ശബ്ദം ആണ്",
+                "consent_token": challenge["token"],
+            },
+            files={"reference_audio": ("r.wav", reference_bytes, "audio/wav")},
+        )
+        assert response.status_code == 403
+
+    def _enrol_without_consent(
+        self, settings: Settings, auth: dict[str, str], reference_bytes: bytes
+    ) -> dict[str, object]:
+        from mlvoice.api.app import Overrides, create_app
+
+        relaxed = settings.model_copy(update={"require_consent": False})
+        with TestClient(create_app(Overrides(settings=relaxed))) as client:
+            response = client.post(
+                "/v1/voices",
+                headers=auth,
+                data={"name": "Rajan", "reference_text": "ഇത് എന്റെ ശബ്ദം ആണ്"},
+                files={"reference_audio": ("r.wav", reference_bytes, "audio/wav")},
+            )
+        assert response.status_code == 201, response.text
+        body: dict[str, object] = response.json()
+        return body
+
+    def test_enrolment_succeeds_when_consent_is_off(
+        self, settings: Settings, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        voice = self._enrol_without_consent(settings, auth, reference_bytes)
+        assert voice["status"] == "active"
+
+    def test_such_a_voice_is_reported_unverified(
+        self, settings: Settings, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        """It must not read as consented. A caller comparing voices needs to
+        see which ones carry a consent record and which do not."""
+        voice = self._enrol_without_consent(settings, auth, reference_bytes)
+        assert voice["consent_verified"] is False
+        assert voice["consent_id"] is None
+
+    def test_info_tells_a_client_which_mode_it_is_in(
+        self, settings: Settings, reference_bytes: bytes
+    ) -> None:
+        """The web client hides its consent step off this flag, so it is part
+        of the contract rather than decoration."""
+        from mlvoice.api.app import Overrides, create_app
+
+        relaxed = settings.model_copy(update={"require_consent": False})
+        with TestClient(create_app(Overrides(settings=relaxed))) as client:
+            assert client.get("/v1/info").json()["consent_required"] is False
+
+    def test_production_cannot_turn_consent_off(self, settings: Settings) -> None:
+        """The escape hatch must not be reachable where it matters."""
+        from mlvoice.errors import ConfigurationError
+
+        with pytest.raises(ConfigurationError):
+            Settings(
+                _env_file=None,
+                env="production",
+                api_keys="k",
+                tts_backend="indicf5",
+                model_revision="abc123",
+                consent_signing_key="c",
+                watermark_key="w",
+                require_consent=False,
+            )
+
+
 class TestWatermarkEndpoint:
     def test_generated_audio_is_detected(self, client: TestClient, auth: dict[str, str]) -> None:
         audio = client.post(

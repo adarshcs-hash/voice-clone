@@ -127,8 +127,6 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     produces a beep. Everything else -- storage, quality gates, watermarking,
     the text frontend -- is the production path.
     """
-    import uvicorn
-
     from mlvoice.api.app import Overrides, create_app
     from mlvoice.config import Settings
     from mlvoice.voices.consent import ConsentVerifier
@@ -178,6 +176,45 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             consent_verifier=EchoVerifier(transcriber=transcriber, speaker_verifier=SameSpeaker()),
         )
     )
+    yield from _serve(app)
+
+
+@pytest.fixture(scope="module")
+def service_without_consent(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """The same service with ``MLVOICE_REQUIRE_CONSENT`` off.
+
+    Development-only -- production refuses to start this way -- and the client
+    is expected to drop its consent step entirely rather than collect a
+    recording nobody checks.
+    """
+    from mlvoice.api.app import Overrides, create_app
+    from mlvoice.config import Settings
+
+    root = tmp_path_factory.mktemp("no-consent")
+    settings = Settings(
+        _env_file=None,
+        env="development",
+        api_keys="test-key",
+        tts_backend="dummy",
+        asr_enabled=False,
+        require_consent=False,
+        database_url=f"sqlite:///{root}/mlvoice.db",
+        voice_storage_dir=root / "voices",
+        consent_signing_key="browser-test-consent-key",
+        watermark_key="browser-test-watermark-key",
+        log_level="WARNING",
+    )
+    yield from _serve(create_app(Overrides(settings=settings)))
+
+
+def _serve(app: Any) -> Iterator[str]:
+    """Run an application on a real socket for the duration of a fixture.
+
+    A TestClient cannot serve a browser, so this is uvicorn on a thread with
+    an ephemeral port, chosen by binding one and releasing it.
+    """
+    import uvicorn
+
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -196,14 +233,13 @@ def service(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         thread.join(timeout=10)
 
 
-@pytest.fixture
-def page(browser: Any, service: str) -> Iterator[Any]:
-    """A page on the running service, failing the test on any script error."""
+def _open(browser: Any, base_url: str) -> Iterator[Any]:
+    """A page on a running service, failing the test on any script error."""
     context = browser.new_context(permissions=["microphone"])
     errors: list[str] = []
     active = context.new_page()
     active.on("pageerror", lambda error: errors.append(str(error)))
-    active.goto(f"{service}/ui", wait_until="networkidle")
+    active.goto(f"{base_url}/ui", wait_until="networkidle")
     active.fill("#apiKey", "test-key")
     active.dispatch_event("#apiKey", "change")
     try:
@@ -211,6 +247,18 @@ def page(browser: Any, service: str) -> Iterator[Any]:
     finally:
         context.close()
     assert not errors, f"uncaught script errors: {errors}"
+
+
+@pytest.fixture
+def page(browser: Any, service: str) -> Iterator[Any]:
+    """A page on the service that requires consent."""
+    yield from _open(browser, service)
+
+
+@pytest.fixture
+def page_without_consent(browser: Any, service_without_consent: str) -> Iterator[Any]:
+    """A page on the service that does not."""
+    yield from _open(browser, service_without_consent)
 
 
 def _settled(page: Any, element: str, *, not_starting_with: str, timeout: int = 30_000) -> str:
@@ -310,3 +358,46 @@ class TestEnrolment:
     def test_a_challenge_needs_a_name(self, page: Any) -> None:
         page.click("#challengeButton")
         assert "name" in page.inner_text("#consentStatus")
+
+
+class TestConsentDisabled:
+    """What the client does when the server does not require consent.
+
+    Leaving the step on screen would be the worst outcome: a user reads a
+    sentence aloud, records it, and learns nothing about whether it counted.
+    """
+
+    def test_the_consent_step_is_gone(self, page_without_consent: Any) -> None:
+        assert page_without_consent.locator("#consentSection").is_hidden()
+
+    def test_the_remaining_steps_are_renumbered(self, page_without_consent: Any) -> None:
+        """A visible sequence of 1, 2, 4, 5 reads as a bug."""
+        numbers = page_without_consent.locator(
+            "main > section:not([hidden]) > h2 > .step"
+        ).all_inner_texts()
+        assert numbers == [str(i + 1) for i in range(len(numbers))]
+
+    def test_the_consent_step_is_present_when_it_is_required(self, page: Any) -> None:
+        """The same page, against the default configuration."""
+        assert page.locator("#consentSection").is_visible()
+
+    def test_enrolment_works_without_a_recording(
+        self, page_without_consent: Any, reference_wav: Path
+    ) -> None:
+        page = page_without_consent
+        page.set_input_files("#referenceFile", str(reference_wav))
+        page.wait_for_selector("#referencePlayer:not([hidden])")
+        _settled(page, "referenceStatus", not_starting_with="Converting")
+        page.fill("#referenceText", "ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്")
+        page.fill("#voiceName", "Rajan voice")
+        page.click("#enrolButton")
+        enrolled = _settled(page, "enrolStatus", not_starting_with="Enrolling")
+        assert enrolled.startswith("Enrolled as voice_"), enrolled
+        assert "consent unverified" in enrolled, "an unconsented voice must not read as consented"
+
+    def test_a_voice_still_needs_a_name(self, page_without_consent: Any) -> None:
+        """The name normally falls back to the subject name, which lived in the
+        step that is now gone."""
+        page = page_without_consent
+        page.click("#enrolButton")
+        assert "reference" in page.inner_text("#enrolStatus")

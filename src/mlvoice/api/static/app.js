@@ -17,6 +17,10 @@ const state = {
   challengeToken: null,
   voiceId: null,
   lastAudioUrl: null,
+  /* Assume consent is required until /v1/info says otherwise. If that fetch
+   * fails, asking for consent that the server may not check is the harmless
+   * mistake; skipping consent the server does check is not. */
+  consentRequired: true,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -227,15 +231,22 @@ async function enrol() {
     setStatus("enrolStatus", "Add a reference recording first.", "warn");
     return;
   }
-  if (!state.consentWav || !state.challengeToken) {
+  if (state.consentRequired && (!state.consentWav || !state.challengeToken)) {
     setStatus("enrolStatus", "Record the consent sentence first.", "warn");
     return;
   }
+  const name = $("voiceName").value.trim() || $("subjectName").value.trim();
+  if (!name) {
+    setStatus("enrolStatus", "Give the voice a name.", "warn");
+    return;
+  }
   const form = new FormData();
-  form.append("name", $("voiceName").value.trim() || $("subjectName").value.trim());
-  form.append("consent_token", state.challengeToken);
+  form.append("name", name);
   form.append("reference_audio", state.referenceWav, "reference.wav");
-  form.append("consent_audio", state.consentWav, "consent.wav");
+  /* Sent when present even where the server does not require them, so a
+   * deployment that turns consent back on keeps the records it collected. */
+  if (state.challengeToken) form.append("consent_token", state.challengeToken);
+  if (state.consentWav) form.append("consent_audio", state.consentWav, "consent.wav");
   const transcript = $("referenceText").value.trim();
   if (transcript) form.append("reference_text", transcript);
 
@@ -412,6 +423,25 @@ function bindRecorder(recorder, button, onDone, statusId) {
   });
 }
 
+/* Hide the consent step when the server does not check it, and renumber what
+ * is left. Leaving a dead step visible would be worse than either extreme: a
+ * user would read the sentence aloud, record it, and learn nothing about
+ * whether it mattered. The step numbers are computed rather than written into
+ * the markup so that removing a section cannot leave a gap in the sequence. */
+function applyConsentRequirement() {
+  $("consentSection").hidden = !state.consentRequired;
+  /* The voice name normally falls back to the subject name, which lives in the
+   * consent step. With that step gone there is nothing to fall back to. */
+  $("voiceName").placeholder = state.consentRequired
+    ? "defaults to the name above"
+    : "required";
+  document
+    .querySelectorAll("main > section:not([hidden]) > h2 > .step")
+    .forEach((node, index) => {
+      node.textContent = String(index + 1);
+    });
+}
+
 function bindFileInput(input, onDone, statusId) {
   input.addEventListener("change", async () => {
     const file = input.files[0];
@@ -458,6 +488,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     $("backendInfo").textContent =
       `${info.backend.backend} · ${info.backend.model_id} · ${info.backend.device} · ` +
       `${info.environment}${info.watermarking ? " · watermarked" : ""}`;
+    state.consentRequired = info.consent_required !== false;
+    applyConsentRequirement();
     if (info.backend.backend === "dummy") {
       setStatus(
         "backendWarning",

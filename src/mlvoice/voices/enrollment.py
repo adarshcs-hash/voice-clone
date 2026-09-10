@@ -78,7 +78,10 @@ class EnrollmentRequest:
             clone -- which is why asking a caller to type it is worse than
             recognising it and letting them correct the result.
         consent_token: Token from :meth:`EnrollmentService.issue_challenge`.
+            ``None`` is accepted only where ``settings.require_consent`` is
+            off, which production forbids.
         consent_audio: Encoded recording of the subject reading the challenge.
+            ``None`` on the same terms as ``consent_token``.
         dialect: Optional regional label, for corpus and catalogue reporting.
         gender: Optional label, for catalogue reporting.
     """
@@ -87,8 +90,8 @@ class EnrollmentRequest:
     owner_id: str
     reference_audio: bytes
     reference_text: str | None
-    consent_token: str
-    consent_audio: bytes
+    consent_token: str | None = None
+    consent_audio: bytes | None = None
     dialect: str = "unknown"
     gender: str = "unknown"
 
@@ -198,19 +201,31 @@ class EnrollmentService:
             AudioError: The reference clip fails the quality gate.
             ConsentError: Consent is required and could not be verified.
         """
-        phrase = self._decode_challenge(request.consent_token)
-        for candidate in (request.name, phrase.subject_name):
+        phrase = (
+            self._decode_challenge(request.consent_token)
+            if request.consent_token is not None
+            else None
+        )
+        candidates = [request.name] if phrase is None else [request.name, phrase.subject_name]
+        for candidate in candidates:
             if self._blocklist.is_blocked(candidate):
                 log.warning("blocked enrolment name", name=candidate, owner_id=request.owner_id)
                 raise ModerationError("this voice name cannot be enrolled", name=candidate)
 
         reference = self._prepare_reference(request.reference_audio)
         reference_text = self._resolve_transcript(request.reference_text, reference)
-        consent_audio = load_audio(
-            request.consent_audio, target_sample_rate=self._settings.sample_rate
+        consent_audio = (
+            load_audio(request.consent_audio, target_sample_rate=self._settings.sample_rate)
+            if request.consent_audio is not None
+            else None
         )
 
         if self._settings.require_consent:
+            if phrase is None or consent_audio is None:
+                raise ConsentError(
+                    "a consent challenge token and a recording of the subject "
+                    "reading it aloud are required to enrol a voice"
+                )
             if self._verifier is None:
                 raise ConsentError(
                     "consent is required but no verifier is configured; refusing "
@@ -224,19 +239,26 @@ class EnrollmentService:
                     "consent verification failed", reasons=list(verification.reasons)
                 )
         else:
+            # Reachable only outside production, which refuses to start with
+            # consent disabled. Warning rather than info on purpose: an
+            # unconsented voice sitting in the store is a compliance fact, and
+            # the log is the only place it is recorded as one.
             log.warning(
                 "enrolling without consent verification; not permitted in production",
                 owner_id=request.owner_id,
+                consent_supplied=request.consent_token is not None,
             )
             verification = None
 
         voice_id = f"voice_{uuid.uuid4().hex[:16]}"
         base = Path(self._settings.voice_storage_dir) / request.owner_id / voice_id
         reference_path = save_audio(reference, base / "reference.wav")
-        consent_path = save_audio(consent_audio, base / "consent.wav")
+        consent_path = (
+            save_audio(consent_audio, base / "consent.wav") if consent_audio is not None else None
+        )
 
         consent_id: str | None = None
-        if verification is not None:
+        if verification is not None and phrase is not None:
             now = datetime.now(UTC)
             record = ConsentRecord(
                 id=f"consent_{uuid.uuid4().hex[:16]}",
