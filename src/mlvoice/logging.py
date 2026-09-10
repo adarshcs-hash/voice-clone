@@ -43,7 +43,10 @@ def configure_logging(
         level=getattr(logging, level.upper(), logging.INFO),
         force=True,
     )
-    # Uvicorn's access log duplicates our request middleware; keep errors only.
+    # Uvicorn's access log duplicates the request middleware's structured
+    # line. This handles the embedded case (someone calling create_app from
+    # their own server); the CLI additionally passes access_log=False, because
+    # uvicorn reinstalls its own logging config after this function has run.
     logging.getLogger("uvicorn.access").handlers.clear()
     logging.getLogger("uvicorn.access").propagate = False
 

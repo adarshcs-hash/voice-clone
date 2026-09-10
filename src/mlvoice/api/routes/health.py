@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, status
 
 from mlvoice.__version__ import __version__
 from mlvoice.api.deps import get_settings_dep, get_synthesizer
@@ -20,6 +20,35 @@ from mlvoice.config import Settings
 from mlvoice.tts.base import Synthesizer
 
 router = APIRouter(tags=["health"])
+
+
+@router.get("/", include_in_schema=False, summary="Service index")
+def index() -> dict[str, str]:
+    """Point a browser or a curl at the useful endpoints.
+
+    Without this, the first thing anyone who opens the service in a browser
+    sees is a 404, which reads as a broken deployment rather than as an API
+    with no root resource.
+    """
+    return {
+        "service": "mlvoice",
+        "version": __version__,
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+        "health": "/healthz",
+        "readiness": "/readyz",
+        "capabilities": "/v1/info",
+    }
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    """Answer the browser's automatic favicon request.
+
+    204 rather than a 404, so an unavoidable browser request does not fill the
+    access log with errors that look like a problem.
+    """
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/healthz", response_model=HealthResponse, summary="Liveness")

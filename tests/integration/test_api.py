@@ -72,6 +72,25 @@ class TestHealth:
         assert body["consent_required"] is True
         assert body["watermarking"] is True
 
+    def test_root_index_points_at_the_useful_endpoints(self, client: TestClient) -> None:
+        """Regression: opening the service in a browser used to give a 404."""
+        body = client.get("/").json()
+        assert body["service"] == "mlvoice"
+        assert body["docs"] == "/docs"
+        assert body["health"] == "/healthz"
+
+    def test_root_needs_no_auth(self, client: TestClient) -> None:
+        assert client.get("/").status_code == 200
+
+    def test_favicon_returns_no_content(self, client: TestClient) -> None:
+        """A browser always asks; 204 keeps it out of the error log."""
+        assert client.get("/favicon.ico").status_code == 204
+
+    def test_index_and_favicon_are_not_in_the_schema(self, client: TestClient) -> None:
+        paths = client.get("/openapi.json").json()["paths"]
+        assert "/" not in paths
+        assert "/favicon.ico" not in paths
+
     def test_openapi_is_generated(self, client: TestClient) -> None:
         paths = client.get("/openapi.json").json()["paths"]
         assert "/v1/tts" in paths

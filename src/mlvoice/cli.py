@@ -111,6 +111,11 @@ def serve(
     """Run the HTTP service."""
     import uvicorn
 
+    # access_log=False because RequestContextMiddleware already emits one
+    # structured line per request, with the request id bound. uvicorn installs
+    # its own logging config when it starts, after configure_logging has run,
+    # so silencing the access logger from our side does not survive; this flag
+    # is what actually stops the duplicate.
     uvicorn.run(
         "mlvoice.api.app:create_app",
         factory=True,
@@ -118,6 +123,7 @@ def serve(
         port=port,
         reload=reload,
         workers=1 if reload else workers,
+        access_log=False,
     )
 
 
