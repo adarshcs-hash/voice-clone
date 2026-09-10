@@ -83,6 +83,21 @@ class TestTranscriptPlausibility:
     def test_rate_is_computed(self) -> None:
         assert self._prompt(80, 8.0).chars_per_second == pytest.approx(10.0)
 
+    def test_long_reference_is_flagged_as_slow_not_wrong(self) -> None:
+        """F5-family models generate reference plus target and discard the
+        reference, so its length is paid for on every request."""
+        note = self._prompt(150, 20.0).duration_advisory()
+        assert note is not None
+        assert "trimming" in note
+
+    def test_short_reference_gets_no_duration_advisory(self) -> None:
+        assert self._prompt(60, 6.0).duration_advisory() is None
+
+    def test_advisories_collects_every_concern(self) -> None:
+        both = self._prompt(600, 20.0).advisories()
+        assert len(both) == 2
+        assert self._prompt(60, 6.0).advisories() == ()
+
     def test_warning_never_blocks_synthesis(self) -> None:
         """An unusual rate is possible; refusing a legitimate request is worse."""
         prompt = self._prompt(200, 3.0)

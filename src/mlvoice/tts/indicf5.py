@@ -32,6 +32,12 @@ In a container, pass ``HF_TOKEN`` as a secret and mount a warm
 
 Operational notes
 -----------------
+*   **The reference transcript is normalised too.** It is passed through
+    :func:`mlvoice.text.unicode_norm.normalize` before reaching the model, so
+    that the reference and the target are in the same orthographic form. A
+    transcript written with the legacy ``ൻറ`` spelling against a target
+    normalised to ``ന്റ`` would otherwise present the model with two spellings
+    of the same word, one of which it may never have seen.
 *   **The reference transcript matters.** The model conditions on ``ref_text``;
     supplying the wrong transcript degrades the clone badly. Enrolment stores a
     verified transcript for exactly this reason.

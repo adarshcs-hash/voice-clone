@@ -57,6 +57,16 @@ MAX_REFERENCE_SECONDS: Final = 30.0
 MIN_PLAUSIBLE_CHARS_PER_SECOND: Final = 4.0
 MAX_PLAUSIBLE_CHARS_PER_SECOND: Final = 25.0
 
+EFFICIENT_REFERENCE_SECONDS: Final = 12.0
+"""Above this, a reference costs noticeably more than it contributes.
+
+Flow-matching models of the F5 family synthesise the reference and the target
+together and then discard the reference portion, so generation time scales with
+``reference_duration + target_duration``. A 20-second reference therefore makes
+every request several times slower than a 6-second one, and does not clone
+better -- past a few seconds of clean speech, extra reference mostly adds
+opportunities for misalignment."""
+
 
 @dataclass(frozen=True, slots=True)
 class ReferencePrompt:
@@ -114,6 +124,31 @@ class ReferencePrompt:
                 "than the transcript, trim the audio or complete the transcript"
             )
         return None
+
+    def duration_advisory(self) -> str | None:
+        """Note an inefficiently long reference, if this one is.
+
+        Not a validation error: a long reference works, it is just slower for no
+        quality gain.
+        """
+        duration = self.audio.duration_seconds
+        if duration <= EFFICIENT_REFERENCE_SECONDS:
+            return None
+        return (
+            f"the reference is {duration:.1f}s. Models of this family generate the "
+            "reference alongside the target and discard it afterwards, so "
+            f"generation time scales with both: trimming to under "
+            f"{EFFICIENT_REFERENCE_SECONDS:.0f}s of clean speech would cut the "
+            "wait substantially without hurting the clone"
+        )
+
+    def advisories(self) -> tuple[str, ...]:
+        """Every non-fatal concern about this prompt, in order of importance."""
+        return tuple(
+            note
+            for note in (self.transcript_warning(), self.duration_advisory())
+            if note is not None
+        )
 
     def __post_init__(self) -> None:
         if not self.text.strip():
