@@ -20,12 +20,16 @@ Operational notes
 *   **The reference transcript matters.** The model conditions on ``ref_text``;
     supplying the wrong transcript degrades the clone badly. Enrolment stores a
     verified transcript for exactly this reason.
-*   **Meta-device initialisation must be off.** The bundled code constructs its
+*   **transformers must be older than 4.51.** The bundled code constructs its
     vocoder inside ``__init__`` and moves it to the device, which cannot work
-    if transformers allocated the parameters on the meta device. ``load``
-    therefore passes ``low_cpu_mem_usage=False``. This is the reason the
-    ``transformers`` bound matters as much as it does: the model's code assumes
-    loading behaviour that the library has since changed.
+    if the parameters were allocated on the meta device. Up to 4.50.3,
+    ``low_cpu_mem_usage=False`` (which ``load`` passes) turns meta
+    initialisation off. In 4.51.0 that switch was replaced by
+    ``get_init_context()`` and meta initialisation became unconditional, so the
+    flag is ignored and the model cannot load at all -- it fails with "Cannot
+    copy out of meta tensor". The ``indicf5`` extra pins ``<4.51`` for this
+    reason; it is not a precaution, it is the difference between loading and
+    not.
 *   **``trust_remote_code`` is required**, because the model ships custom
     modelling code. That is remote code execution by design, so the revision is
     pinned: :class:`~mlvoice.config.Settings` refuses an unpinned revision in
@@ -220,11 +224,11 @@ def _load_failure_hint(reason: str, model_id: str) -> str | None:
         )
     if "meta tensor" in lowered or "to_empty" in lowered:
         return (
-            "the model's remote code builds its vocoder during __init__, which "
-            "breaks under transformers' meta-device initialisation. This "
-            "backend passes low_cpu_mem_usage=False for that reason; if the "
-            "error persists, the installed transformers is too new for the "
-            "model's bundled code -- try `pip install 'transformers<4.50'`"
+            "the model's remote code builds its vocoder during __init__ and "
+            "moves it to the device, which fails when transformers allocates "
+            "on the meta device. transformers 4.51.0 made that unconditional "
+            "and ignores low_cpu_mem_usage, so this needs an older release: "
+            "`pip install 'transformers>=4.44,<4.51'`"
         )
     match = _MISSING_DEPS.search(reason)
     if match:

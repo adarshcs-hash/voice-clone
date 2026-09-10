@@ -100,7 +100,7 @@ class TestLoadFailures:
         hint = excinfo.value.context.get("hint")
         assert hint is not None
         assert "vocoder" in hint
-        assert "transformers" in hint
+        assert "4.51" in hint, "the hint must name the version boundary"
 
     def test_unrelated_errors_get_no_misleading_hint(self) -> None:
         with (

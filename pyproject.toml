@@ -59,6 +59,17 @@ indicf5 = [
   "mlvoice[models]",
   "f5-tts>=1.0",
   "pydub>=0.25",
+  # Tighter than the `models` bound, and load-bearing. IndicF5's remote code
+  # builds its vocos vocoder inside __init__ and moves it to the device, which
+  # requires the constructor to allocate real tensors rather than meta ones.
+  #
+  # transformers 4.51.0 replaced the `low_cpu_mem_usage` switch with
+  # `get_init_context()` and made meta-device initialisation unconditional:
+  # verified by inspecting modeling_utils.py across releases, where the flag
+  # goes from 30 mentions in 4.50.3 to 1 vestigial mention in 4.51.0. From
+  # 4.51 onwards, passing low_cpu_mem_usage=False is silently ignored and the
+  # model cannot load at all.
+  "transformers>=4.44,<4.51",
 ]
 # Corpus preparation at scale: the neural VAD and denoiser. The energy VAD and
 # every quality gate are pure NumPy and need none of this.
