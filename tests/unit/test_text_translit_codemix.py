@@ -205,7 +205,7 @@ class TestPunctuationAndHyphens:
     letters-only check, silently skipping transliteration."""
 
     def test_sentence_final_word_is_still_routed(self) -> None:
-        assert route("Kozhikode aanu.") == "കോഴിക്കോട് ആനു."
+        assert route("Kozhikode aanu.") == "കോഴിക്കോട് ആണ്."
 
     @pytest.mark.parametrize("punct", [".", ",", "!", "?", "...", "'"])
     def test_trailing_punctuation_is_preserved(self, punct: str) -> None:
