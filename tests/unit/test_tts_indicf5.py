@@ -102,6 +102,21 @@ class TestLoadFailures:
         assert "vocoder" in hint
         assert "4.51" in hint, "the hint must name the version boundary"
 
+    def test_wrong_f5_tts_package_is_identified(self) -> None:
+        """Two different packages expose the `f5_tts` import. Upstream's
+        load_model takes a required ckpt_path; AI4Bharat's does not, and the
+        model's code calls the latter."""
+        message = "load_model() missing 1 required positional argument: 'ckpt_path'"
+        with (
+            patch.dict(sys.modules, _stub_modules(TypeError(message))),
+            pytest.raises(BackendUnavailableError) as excinfo,
+        ):
+            IndicF5Synthesizer(revision="abc123").load()
+        hint = excinfo.value.context.get("hint")
+        assert hint is not None
+        assert "AI4Bharat" in hint
+        assert "mlvoice[indicf5]" in hint
+
     def test_unrelated_errors_get_no_misleading_hint(self) -> None:
         with (
             patch.dict(sys.modules, _stub_modules(OSError("No space left on device"))),

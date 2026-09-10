@@ -124,11 +124,13 @@ touching the model.
 `backend_unavailable`; the error carries a `hint` for the common causes. In
 order of likelihood: the repository is gated and the process has no token for
 an account with access (401 / `GatedRepoError` — set `HF_TOKEN`); `transformers`
-is 4.51 or newer, which makes meta-device initialisation unconditional so the
+is 4.50 or newer, which makes meta-device initialisation unconditional so the
 model's bundled vocoder cannot be moved to a device ("Cannot copy out of meta
-tensor" — install `transformers>=4.44,<4.51`); the `indicf5` extra is missing,
-so `f5_tts` and `pydub` are absent; a bad revision pin; or no disk space for
-the weights cache.
+tensor" — install `transformers>=4.44,<4.50`); `f5_tts` is the PyPI package
+rather than AI4Bharat's fork ("load_model() missing 1 required positional
+argument" — install the `indicf5` extra, which replaces it); the `indicf5`
+extra is missing entirely, so `f5_tts` and `pydub` are absent; a bad revision
+pin; or no disk space for the weights cache.
 
 **Latency has regressed.** Compare `X-Real-Time-Factor` against your baseline.
 If chunk count per request has grown, someone is sending longer text; the

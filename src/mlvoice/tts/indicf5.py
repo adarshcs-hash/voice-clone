@@ -6,6 +6,21 @@ Malayalam included. It clones zero-shot from a reference clip plus that clip's
 transcript, which makes it the strongest open starting point for a Malayalam
 voice product and the model this project targets first.
 
+The ``f5_tts`` dependency is not the one on PyPI
+------------------------------------------------
+IndicF5's remote code imports ``f5_tts``, and there are two different packages
+with that import name. The one on PyPI is SWivid's upstream F5-TTS; AI4Bharat
+ships its own, at ``github.com/AI4Bharat/IndicF5``, whose API the model's code
+actually targets -- upstream's ``load_model`` takes a required ``ckpt_path``
+positional argument and AI4Bharat's does not. Install the fork:
+
+.. code-block:: shell
+
+    pip install "mlvoice[indicf5]"
+
+The PyPI package gets far enough to look like it worked and then fails with
+``load_model() missing 1 required positional argument``.
+
 Access
 ------
 The repository is **gated**: fetching it requires requesting access on the
@@ -229,6 +244,13 @@ def _load_failure_hint(reason: str, model_id: str) -> str | None:
             "on the meta device. transformers 4.51.0 made that unconditional "
             "and ignores low_cpu_mem_usage, so this needs an older release: "
             "`pip install 'transformers>=4.44,<4.51'`"
+        )
+    if "load_model()" in reason and "ckpt_path" in reason:
+        return (
+            "the installed f5_tts is SWivid's upstream package from PyPI, not "
+            "AI4Bharat's fork that this model's code targets: the two share an "
+            "import name but not an API. Install the fork with "
+            "`pip install 'mlvoice[indicf5]'`, which replaces it"
         )
     match = _MISSING_DEPS.search(reason)
     if match:

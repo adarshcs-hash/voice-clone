@@ -97,10 +97,18 @@ MLVOICE_TTS_BACKEND=indicf5 MLVOICE_MODEL_REVISION=<commit-sha> mlvoice serve
 ```
 
 The `indicf5` extra is separate from `models` because the model's bundled code
-imports `f5-tts`, which brings roughly thirty transitive dependencies (gradio,
-wandb, datasets, matplotlib among them). Those are the model's requirements,
-not this project's, and they have no place in a deployment that only needs the
-inference path.
+pulls in a large dependency tree of its own — those are the model's
+requirements, not this project's, and they have no place in a deployment that
+only needs the inference path.
+
+Two things in that extra are load-bearing and easy to get wrong:
+
+- **`f5_tts` must be AI4Bharat's fork**, installed from GitHub, not the
+  `f5-tts` package on PyPI. Both expose the same import name; only the fork has
+  the API IndicF5's code calls.
+- **`transformers` must be `<4.50`.** 4.51.0 made meta-device initialisation
+  unconditional, under which the model cannot load; AI4Bharat's own
+  requirements say `<4.50`.
 
 The `dummy` backend is a deterministic phoneme-driven signal generator. It is
 not a model; it exists so the API contract, streaming, watermarking and the
