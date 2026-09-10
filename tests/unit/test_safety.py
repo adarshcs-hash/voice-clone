@@ -214,3 +214,9 @@ class TestNameBlocklist:
 
     def test_missing_file_is_tolerated(self, tmp_path) -> None:
         assert len(NameBlocklist.from_file(tmp_path / "absent.txt")) == 0
+
+    def test_a_directory_is_tolerated(self, tmp_path) -> None:
+        """Regression: a misconfigured path pointing at a directory raised
+        IsADirectoryError and killed application startup."""
+        assert len(NameBlocklist.from_file(tmp_path)) == 0
+        assert len(NameBlocklist.from_file(".")) == 0

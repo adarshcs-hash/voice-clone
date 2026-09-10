@@ -49,6 +49,44 @@ class TestParsing:
         assert "topsecret" not in repr(settings)
 
 
+class TestBlankEnvironmentVariables:
+    """A blank variable in a .env file arrives as "", not as absent.
+
+    Regression: MLVOICE_BLOCKED_VOICE_NAMES_FILE= became Path("") -- which is
+    Path("."), truthy, and exists -- so startup tried to read the working
+    directory as a blocklist and raised IsADirectoryError. And
+    MLVOICE_MODEL_REVISION= became "", which is not None and so satisfied the
+    production "weights must be pinned" gate.
+    """
+
+    def test_blank_path_is_unset(self) -> None:
+        assert (
+            Settings(_env_file=None, blocked_voice_names_file="").blocked_voice_names_file is None
+        )
+
+    def test_whitespace_path_is_unset(self) -> None:
+        assert (
+            Settings(_env_file=None, blocked_voice_names_file="   ").blocked_voice_names_file
+            is None
+        )
+
+    def test_blank_revision_is_unset(self) -> None:
+        assert Settings(_env_file=None, model_revision="").model_revision is None
+
+    def test_a_real_path_is_kept(self, tmp_path: object) -> None:
+        settings = Settings(_env_file=None, blocked_voice_names_file="/tmp/blocked.txt")
+        assert settings.blocked_voice_names_file is not None
+        assert settings.blocked_voice_names_file.name == "blocked.txt"
+
+    def test_a_real_revision_is_kept(self) -> None:
+        assert Settings(_env_file=None, model_revision="abc123").model_revision == "abc123"
+
+    def test_production_refuses_a_blank_revision(self) -> None:
+        with pytest.raises(ConfigurationError) as excinfo:
+            _production(model_revision="")
+        assert "MODEL_REVISION" in " ".join(excinfo.value.context["problems"])
+
+
 class TestProductionInvariants:
     def test_valid_production_config_is_accepted(self) -> None:
         assert _production().is_production

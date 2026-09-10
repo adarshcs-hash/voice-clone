@@ -198,8 +198,13 @@ class NameBlocklist:
     def from_file(cls, path: str | Path) -> NameBlocklist:
         """Load a newline-delimited blocklist, ignoring blanks and ``#`` comments."""
         file = Path(path)
-        if not file.exists():
-            log.warning("blocklist file not found; enrolment name checks disabled", path=str(file))
+        if not file.is_file():
+            # ``is_file`` rather than ``exists``: a misconfigured path can point
+            # at a directory, and reading one raises IsADirectoryError.
+            log.warning(
+                "blocklist file not found or not a file; enrolment name checks disabled",
+                path=str(file),
+            )
             return cls()
         lines = (line.strip() for line in file.read_text(encoding="utf-8").splitlines())
         return cls(line for line in lines if line and not line.startswith("#"))

@@ -96,6 +96,23 @@ class Settings(BaseSettings):
     def _strip_keys(cls, value: SecretStr) -> SecretStr:
         return SecretStr(value.get_secret_value().strip())
 
+    @field_validator("model_revision", "blocked_voice_names_file", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """Treat a blank environment variable as unset.
+
+        ``MLVOICE_MODEL_REVISION=`` in a ``.env`` file arrives as the empty
+        string, not as absent. Without this, an optional ``Path`` field becomes
+        ``Path("")`` -- which is ``Path(".")``, is truthy, and exists -- and an
+        optional ``str`` field becomes ``""``, which is not ``None`` and would
+        satisfy an ``is None`` check. Both were real failures: the first crashed
+        startup by reading the working directory as a blocklist, the second let
+        an unpinned model revision through the production gate.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def _enforce_production_invariants(self) -> Settings:
         if self.env is not Environment.PRODUCTION:
@@ -113,7 +130,8 @@ class Settings(BaseSettings):
             problems.append("MLVOICE_WATERMARK_KEY must be set when watermarking is enabled")
         if self.tts_backend == "dummy":
             problems.append("the dummy backend cannot serve production traffic")
-        if self.model_revision is None and self.tts_backend != "dummy":
+        # Falsiness, not ``is None``: a blank value must not satisfy this gate.
+        if not self.model_revision and self.tts_backend != "dummy":
             problems.append("MLVOICE_MODEL_REVISION must pin the weights in production")
         if problems:
             raise ConfigurationError("invalid production configuration", problems=problems)
