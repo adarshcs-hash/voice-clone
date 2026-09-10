@@ -86,7 +86,11 @@ LATIN_LETTER_NAMES: Final[dict[str, str]] = {
 }
 
 _ACRONYM: Final[re.Pattern[str]] = re.compile(r"^(?:[A-Z]\.?){2,6}$")
+# A Latin run may carry interior dots (``U.P.S.C``) and hyphens (``app-il``),
+# so both are part of the token; :func:`_split_affixes` and the hyphen handling
+# in :func:`_route_latin_word` peel them back off before classification.
 _LATIN_RUN: Final[re.Pattern[str]] = re.compile(r"[A-Za-z][A-Za-z'.-]*")
+_TRAILING_PUNCT: Final[re.Pattern[str]] = re.compile(r"^(.*?)([.\-']*)$", re.DOTALL)
 
 
 class Script(StrEnum):
@@ -233,7 +237,21 @@ def spell_acronym(word: str) -> str:
     return " ".join(LATIN_LETTER_NAMES.get(ch, ch) for ch in letters)
 
 
-def _route_latin_word(word: str, config: CodeMixConfig) -> str:
+def _split_affixes(word: str) -> tuple[str, str]:
+    """Split a token into its letters and any trailing dots, hyphens or apostrophes.
+
+    A sentence-final Latin word arrives as ``aanu.`` because the run pattern
+    admits interior dots for acronyms. Classifying that token directly fails
+    every letters-only check, which silently left such words untransliterated.
+    """
+    match = _TRAILING_PUNCT.match(word)
+    if match is None:  # pragma: no cover - the pattern always matches
+        return word, ""
+    return match.group(1), match.group(2)
+
+
+def _classify_and_route(word: str, config: CodeMixConfig) -> str:
+    """Route a single token that carries no trailing punctuation."""
     pinned = config.lookup(word)
     if pinned is not None:
         return pinned
@@ -252,6 +270,33 @@ def _route_latin_word(word: str, config: CodeMixConfig) -> str:
             return spell_acronym(word)
         case LatinPolicy.DROP:
             return ""
+
+
+def _route_latin_word(word: str, config: CodeMixConfig) -> str:
+    """Route one Latin-script token, handling punctuation and hyphenation.
+
+    A hyphenated token is routed segment by segment, because code-mixed
+    Malayalam attaches Malayalam case suffixes to English stems: in ``app-il``
+    the stem stays English and the suffix becomes ``ഇൽ``.
+    """
+    # The lexicon sees the token exactly as written first, so an entry may pin
+    # a form that includes punctuation.
+    pinned = config.lookup(word)
+    if pinned is not None:
+        return pinned
+
+    core, trailing = _split_affixes(word)
+    if not core:
+        return word
+
+    if "-" in core:
+        segments = core.split("-")
+        routed = "-".join(
+            _classify_and_route(segment, config) if segment else segment for segment in segments
+        )
+        return routed + trailing
+
+    return _classify_and_route(core, config) + trailing
 
 
 def route(text: str, config: CodeMixConfig = DEFAULT_CONFIG) -> str:

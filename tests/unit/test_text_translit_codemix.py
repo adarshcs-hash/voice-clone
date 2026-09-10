@@ -181,3 +181,38 @@ class TestRouting:
     def test_detection_can_be_turned_off(self) -> None:
         config = CodeMixConfig(manglish_detection=ManglishDetection.OFF)
         assert route("njan paranju", config) == "njan paranju"
+
+
+class TestPunctuationAndHyphens:
+    """Regression: the Latin run pattern admits interior dots and hyphens for
+    acronyms, so a sentence-final word arrived as ``aanu.`` and failed every
+    letters-only check, silently skipping transliteration."""
+
+    def test_sentence_final_word_is_still_routed(self) -> None:
+        assert route("Kozhikode aanu.") == "കോഴിക്കോട് ആനു."
+
+    @pytest.mark.parametrize("punct", [".", ",", "!", "?", "...", "'"])
+    def test_trailing_punctuation_is_preserved(self, punct: str) -> None:
+        out = route(f"njan{punct}")
+        assert out.startswith("ഞാൻ")
+        assert out.endswith(punct)
+
+    def test_acronym_with_a_trailing_stop(self) -> None:
+        assert route("UPSC.") == "യു പി എസ് സി."
+
+    def test_acronym_with_interior_dots_survives(self) -> None:
+        assert route("U.P.S.C") == "യു പി എസ് സി"
+
+    def test_hyphenated_stem_and_suffix_are_routed_separately(self) -> None:
+        """Code-mixed Malayalam attaches Malayalam suffixes to English stems."""
+        assert route("ഈ app-il login ചെയ്യണം") == "ഈ app-ഇൽ login ചെയ്യണം"
+
+    def test_hyphen_is_preserved(self) -> None:
+        assert route("veedu-il") == "വീട്-ഇൽ"
+
+    def test_english_before_punctuation_is_still_left_alone(self) -> None:
+        assert route("hello world.") == "hello world."
+
+    def test_lexicon_may_pin_a_punctuated_form(self) -> None:
+        config = CodeMixConfig(loanword_lexicon={"No.": "നമ്പർ"})
+        assert route("No. 5", config) == "നമ്പർ 5"
