@@ -97,6 +97,48 @@ class TestHealth:
         assert "/v1/voices" in paths
 
 
+class TestStartupWarmUp:
+    """The first request used to pay ~1 s on Linux (and far worse on macOS) for
+    the lazy pyloudnorm/SciPy import and NumPy's first FFT plan. Startup pays
+    it now, on the same principle as loading model weights before serving."""
+
+    def test_first_request_is_not_the_slow_one(self, client: TestClient) -> None:
+        import time
+
+        body = {"text": "ഞാൻ എന്റെ നാട്ടിലേക്ക് തിരികെ പോയി"}
+        headers = {"X-API-Key": "test-key"}
+
+        started = time.perf_counter()
+        assert client.post("/v1/tts", json=body, headers=headers).status_code == 200
+        first = time.perf_counter() - started
+
+        started = time.perf_counter()
+        assert client.post("/v1/tts", json=body, headers=headers).status_code == 200
+        second = time.perf_counter() - started
+
+        # Generous bound: this asserts the cold-import cliff is gone, not a
+        # latency budget, so it stays stable on a loaded CI runner.
+        assert first < second * 20 + 0.5, (
+            f"first request {first:.3f}s vs second {second:.3f}s -- warm-up appears not to have run"
+        )
+
+    def test_warm_up_failure_does_not_break_startup(self, settings, verifier) -> None:
+        """A warm-up is an optimisation; it must never block a deploy."""
+        from mlvoice.api.app import Overrides, create_app
+        from mlvoice.tts.dummy import DummySynthesizer
+
+        class Exploding(DummySynthesizer):
+            def _synthesize_chunk(self, chunk_text, request):  # type: ignore[no-untyped-def]
+                raise RuntimeError("warm-up boom")
+
+        app = create_app(
+            Overrides(settings=settings, consent_verifier=verifier, synthesizer=Exploding())
+        )
+        with TestClient(app) as client:
+            # Startup completed despite the warm-up failing.
+            assert client.get("/healthz").json()["status"] == "ok"
+
+
 class TestAuthentication:
     def test_missing_key_is_rejected(self, client: TestClient) -> None:
         response = client.post("/v1/tts", json={"text": "നാട്"})

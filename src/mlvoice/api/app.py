@@ -14,9 +14,10 @@ without monkey-patching module state.
 from __future__ import annotations
 
 import contextlib
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 from fastapi import FastAPI
 
@@ -109,6 +110,42 @@ def _build_watermarker(settings: Settings) -> Watermarker | None:
     return SpreadSpectrumWatermarker(key)
 
 
+_WARMUP_TEXT: Final = "ഒന്ന് രണ്ട് മൂന്ന്."
+
+
+def _warm_up(service: SynthesisService) -> None:
+    """Run one synthesis through the real path during startup.
+
+    Several dependencies import lazily on first use -- ``pyloudnorm`` pulls in
+    SciPy, and NumPy plans its first FFT -- so without this the *user's* first
+    request pays for it. Measured at 1.0 s on Linux and appreciably worse on
+    macOS, where first load of a signed dylib also goes through Gatekeeper.
+    Paying it at startup is the same principle as loading model weights before
+    accepting traffic.
+
+    It also exercises the whole chain (text frontend, synthesis, loudness,
+    watermark) at boot, so a broken configuration shows up in the startup log
+    rather than in the first user response.
+
+    Non-fatal: readiness is gated on the backend having loaded, and a warm-up
+    failure must not block a deploy on its own.
+    """
+    started = time.perf_counter()
+    try:
+        outcome = service.synthesize(
+            _WARMUP_TEXT, owner_id="startup-warmup", request_id="startup-warmup"
+        )
+    except Exception as exc:
+        log.warning("warm-up synthesis failed", reason=str(exc))
+        return
+    log.info(
+        "warm-up complete",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        audio_seconds=round(outcome.audio.duration_seconds, 3),
+        watermarked=outcome.watermark_payload is not None,
+    )
+
+
 def create_app(overrides: Overrides | None = None) -> FastAPI:
     """Build the ASGI application.
 
@@ -165,6 +202,8 @@ def create_app(overrides: Overrides | None = None) -> FastAPI:
         )
         for key, value in overrides.extra_state.items():
             setattr(application.state, key, value)
+
+        _warm_up(application.state.synthesis)
 
         log.info(
             "service ready",

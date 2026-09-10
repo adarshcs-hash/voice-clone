@@ -52,6 +52,13 @@ The `models` target adds torch and transformers.
 | `GET /readyz` | 503 until the backend has loaded. Use this as the readiness probe so a rolling deploy does not route into a cold replica |
 | `GET /v1/info` | The running configuration: backend, model id, revision, whether consent and watermarking are on |
 
+Startup also runs one synthesis through the whole chain (`warm-up complete` in
+the log). Several dependencies import lazily -- `pyloudnorm` pulls in SciPy, and
+NumPy plans its first FFT -- and without this the first *user* request paid for
+it: measured at 1.0 s on Linux, and appreciably worse on macOS where the first
+load of a signed dylib also goes through Gatekeeper. A warm-up failure is
+logged but never blocks startup.
+
 The model loads during application startup, so a weight-loading failure stops
 the rollout instead of surfacing as a 500 on the first real request. With
 `trust_remote_code` models, expect the first start on a cold cache to take
