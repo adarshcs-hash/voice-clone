@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from mlvoice.__version__ import __version__
 from mlvoice.api.deps import get_settings_dep, get_synthesizer
@@ -80,15 +80,24 @@ def readyz(
 
 @router.get("/v1/info", response_model=InfoResponse, summary="Service capabilities")
 def info(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings_dep)],
     synthesizer: Annotated[Synthesizer, Depends(get_synthesizer)],
 ) -> InfoResponse:
-    """Describe the running configuration, for clients and operators."""
+    """Describe the running configuration, for clients and operators.
+
+    Unauthenticated on purpose: a client has to be able to ask what this
+    deployment needs -- a key, a consent recording, a typed transcript -- before
+    it can ask for anything correctly. Nothing here is a secret; it is the same
+    information the operator put in the environment.
+    """
     return InfoResponse(
         version=__version__,
         environment=settings.env.value,
         backend=synthesizer.info.as_dict(),
         watermarking=settings.watermark_enabled,
         consent_required=settings.require_consent,
+        auth_required=bool(settings.parsed_api_keys),
+        transcription=getattr(request.app.state, "transcriber", None) is not None,
         max_chars_per_request=settings.max_chars_per_request,
     )

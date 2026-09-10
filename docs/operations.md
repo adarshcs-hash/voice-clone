@@ -60,6 +60,13 @@ is unauthenticated because it contains nothing but the form that collects the
 API key -- every request it makes still carries `X-API-Key` and is rate-limited
 like any other caller.
 
+The page adapts to the deployment rather than showing every control it has. It
+reads `auth_required`, `consent_required` and `transcription` from `GET
+/v1/info` and hides what does not apply, so those three settings change what a
+user sees, not just what the API accepts. `/v1/info` is therefore part of the
+client contract and is served unauthenticated: a client has to be able to ask
+what this deployment needs before it can ask for anything correctly.
+
 Set `MLVOICE_UI_ENABLED=false` to switch it off. Both paths then return 404
 rather than 403, so a disabled console is indistinguishable from one that was
 never deployed. Consider that for an internet-facing deployment: the page is

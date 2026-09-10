@@ -192,4 +192,17 @@ class InfoResponse(BaseModel):
     backend: dict[str, object]
     watermarking: bool
     consent_required: bool
+    auth_required: bool = Field(
+        description=(
+            "Whether requests need an API key. Exposed so a client can hide "
+            "the field entirely rather than presenting an empty box on a "
+            "deployment that has no keys configured."
+        )
+    )
+    transcription: bool = Field(
+        description=(
+            "Whether the service can transcribe a reference clip. False means "
+            "the caller must supply the transcript themselves."
+        )
+    )
     max_chars_per_request: int

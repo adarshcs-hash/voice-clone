@@ -212,20 +212,27 @@ line emitted while handling that request carries the same id.
 ## Web client
 
 `GET /ui` serves a single page — no build step, no CDN, no framework, just an
-HTML file and a script the API process itself hands out. Upload or record a
-voice, record the consent sentence, and type what it should say.
+HTML file and a script the API process itself hands out. Two inputs: a voice,
+and the words it should say.
 
-Two decisions shape it:
+Three decisions shape it:
+
+**The page shows only what this deployment actually requires.** `GET /v1/info`
+reports `auth_required`, `consent_required` and `transcription`, and the page
+hides the rest. A local install with no API keys and consent switched off shows
+a file picker and a text box — no key field, no consent step, no enrol button.
+Every field on screen is one the user has to think about, so a field the server
+would ignore is worse than no field at all.
 
 **The reference transcript is transcribed, not typed.** Cloning needs to know
 what the reference clip *says*, and asking a user to type that out is both a bad
 first impression and the source of the worst failure this system has: type the
 text you want *generated* instead of the words in the clip, and you get a
-perfect clone of the voice saying something between the two. So the page uploads
-the clip to `POST /v1/transcribe`, fills the field in, and asks only that you
-correct it — with the field labelled "what the reference clip says" to make the
-distinction hard to miss. If transcription is unavailable the field stays
-editable and the page says so, rather than failing.
+perfect clone of the voice saying something between the two. So the page
+transcribes the clip through `POST /v1/transcribe` and, where consent is not
+required, enrols the voice then and there — choosing a file is the whole
+interaction. The transcript sits under "Details" for correction. If
+transcription is unavailable, that panel opens itself and says what to type.
 
 **The browser converts audio, not the server.** Every clip goes through
 `AudioContext.decodeAudioData` and comes out 16-bit PCM WAV before it is
@@ -233,8 +240,17 @@ uploaded. One code path covers a phone's `.m4a`, an `.mp3`, and the WebM/Opus a
 `MediaRecorder` produces, and the server needs no codec beyond libsndfile —
 server-side conversion would mean shipping ffmpeg in the image.
 
-The page also exposes `POST /v1/text/analyze`, so you can see the chunks and
-phonemes the model will actually be given before paying for a generation.
+Behind a disclosure it also exposes `POST /v1/text/analyze`, so you can see the
+chunks and phonemes the model will be given before paying for a generation.
+
+The simplest local setup:
+
+```bash
+MLVOICE_API_KEYS= MLVOICE_REQUIRE_CONSENT=false mlvoice serve
+```
+
+Read [the consent note](#cloning-your-own-voice) before using that second flag
+on anyone's voice but your own.
 
 ## Corpus preparation
 
@@ -296,7 +312,7 @@ and no network. Tests that require weights are marked `slow` and excluded by
 default. `make test-browser` drives the web client in a real Chromium — those
 tests are marked `browser` and skip themselves when no browser is installed,
 so they never fail a contributor who does not want the download. Current state:
-**653 tests, 94% branch coverage**.
+**674 tests, 94% branch coverage**.
 
 ## What is honest about this
 

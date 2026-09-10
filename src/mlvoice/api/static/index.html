@@ -3,27 +3,40 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mlvoice — Malayalam voice cloning</title>
+    <title>Malayalam voice cloning</title>
     <!--
-      Served by the API process itself. No build step, no CDN, no framework:
-      the whole client is this file plus app.js, so it works offline and on an
-      air-gapped deployment where the voice data has to stay put.
+      One screen: give it a voice, give it words. Everything the server can
+      decide for itself is decided for itself -- the transcript of the
+      reference clip is recognised rather than typed, the voice is enrolled the
+      moment a clip is chosen, and the API key and consent steps appear only on
+      a deployment that actually requires them (GET /v1/info says which).
+
+      Served by the API process itself: no build step, no CDN, works offline.
     -->
     <style>
       :root {
-        --bg: #12141a;
-        --panel: #1b1e26;
-        --line: #2c313d;
-        --ink: #e8eaf0;
-        --dim: #9aa1b1;
+        --bg: #101218;
+        --card: #191c24;
+        --line: #2a2f3a;
+        --ink: #e9ebf1;
+        --dim: #98a0b0;
         --accent: #6ea8fe;
-        --ok: #61c9a8;
-        --warn: #e8c46a;
-        --error: #f08a8a;
+        --ok: #5fc9a4;
+        --warn: #e6c268;
+        --error: #ef8b8b;
         --ml: "Noto Sans Malayalam", "Manjari", "Rachana", "Nirmala UI", sans-serif;
       }
       * {
         box-sizing: border-box;
+      }
+      /* The browser's own [hidden] rule is `display: none` at author strength
+         zero, so any `display` this stylesheet sets -- `flex` on a row,
+         `inline-block` on the download link -- silently overrides it and the
+         element shows anyway. Everything the script reveals is toggled through
+         `hidden`, so without this the page renders with its buttons already
+         out. */
+      [hidden] {
+        display: none !important;
       }
       body {
         margin: 0;
@@ -32,89 +45,64 @@
         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
       main {
-        max-width: 780px;
+        max-width: 660px;
         margin: 0 auto;
-        padding: 32px 20px 96px;
+        padding: 40px 20px 80px;
       }
-      header h1 {
-        margin: 0 0 4px;
-        font-size: 22px;
+      h1 {
+        margin: 0 0 24px;
+        font-size: 20px;
+        font-weight: 600;
         letter-spacing: -0.01em;
       }
-      header p {
-        margin: 0;
-        color: var(--dim);
-      }
-      #backendInfo {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 12px;
-        color: var(--dim);
-      }
-      section {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        padding: 18px 20px;
-        margin-top: 18px;
-      }
-      section > h2 {
-        margin: 0 0 12px;
-        font-size: 15px;
-        display: flex;
-        align-items: baseline;
-        gap: 8px;
-      }
-      section > h2 .step {
-        display: inline-grid;
-        place-items: center;
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        background: var(--line);
-        color: var(--dim);
-        font-size: 12px;
-        flex: none;
-      }
-      .hint {
-        color: var(--dim);
-        font-size: 13px;
-        margin: 0 0 12px;
-      }
-      label {
+      h1 small {
         display: block;
+        margin-top: 4px;
+        font-size: 13px;
+        font-weight: 400;
+        color: var(--dim);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .label {
         font-size: 12px;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.07em;
         color: var(--dim);
-        margin: 12px 0 4px;
+        margin-bottom: 10px;
       }
-      input[type="text"],
-      input[type="password"],
-      textarea,
-      select {
-        width: 100%;
+      /* The drop target is the label, so the whole area is clickable while the
+         input itself stays a real file input for keyboard and screen readers. */
+      .drop {
+        display: block;
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        padding: 22px 18px;
+        text-align: center;
+        color: var(--dim);
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .drop:hover,
+      .drop.over {
+        border-color: var(--accent);
         background: #14171e;
         color: var(--ink);
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        padding: 9px 11px;
-        font: inherit;
       }
-      textarea {
-        resize: vertical;
+      .drop strong {
+        color: var(--ink);
+        font-weight: 500;
       }
-      input:focus,
-      textarea:focus,
-      select:focus {
-        outline: 2px solid var(--accent);
-        outline-offset: -1px;
-      }
-      .ml,
-      textarea.ml,
-      #challengePhrase {
-        font-family: var(--ml);
-        font-size: 17px;
-        line-height: 1.9;
+      .drop input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
       }
       .row {
         display: flex;
@@ -125,15 +113,15 @@
       }
       button {
         background: var(--accent);
-        color: #10131a;
+        color: #0e1117;
         border: 0;
-        border-radius: 7px;
-        padding: 9px 15px;
+        border-radius: 8px;
+        padding: 10px 16px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
       }
-      button.secondary {
+      button.ghost {
         background: transparent;
         color: var(--ink);
         border: 1px solid var(--line);
@@ -141,14 +129,40 @@
       }
       button.recording {
         background: var(--error);
+        color: #0e1117;
       }
       button:disabled {
         opacity: 0.5;
         cursor: default;
       }
-      input[type="file"] {
-        color: var(--dim);
-        font-size: 13px;
+      #speakButton {
+        padding: 12px 22px;
+        font-size: 15px;
+      }
+      textarea,
+      input[type="text"],
+      input[type="password"],
+      select {
+        width: 100%;
+        background: #121520;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 11px 13px;
+        font: inherit;
+      }
+      textarea {
+        resize: vertical;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+      .ml,
+      #challengePhrase {
+        font-family: var(--ml);
+        font-size: 17px;
+        line-height: 1.95;
       }
       audio {
         width: 100%;
@@ -156,9 +170,9 @@
       }
       .status {
         font-size: 13px;
+        color: var(--dim);
         margin-top: 10px;
         min-height: 1.2em;
-        color: var(--dim);
       }
       .status.ok {
         color: var(--ok);
@@ -174,22 +188,38 @@
       }
       #backendWarning {
         border: 1px solid var(--warn);
-        border-radius: 8px;
-        padding: 10px 12px;
-        margin-top: 14px;
+        border-radius: 10px;
+        padding: 11px 14px;
+        margin-bottom: 16px;
       }
-      ul {
-        margin: 10px 0 0;
-        padding-left: 20px;
+      details {
+        margin-top: 16px;
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+      }
+      summary {
+        cursor: pointer;
         font-size: 13px;
-        color: var(--warn);
+        color: var(--dim);
       }
-      #challengeBlock {
+      summary:hover {
+        color: var(--ink);
+      }
+      details .label {
+        margin-top: 16px;
+      }
+      #consentBlock {
         border-left: 3px solid var(--accent);
-        background: #14171e;
+        background: #121520;
         border-radius: 0 8px 8px 0;
-        padding: 10px 14px;
+        padding: 12px 16px;
         margin-top: 14px;
+      }
+      #downloadLink {
+        display: inline-block;
+        margin-top: 10px;
+        color: var(--accent);
+        font-size: 13px;
       }
       table {
         width: 100%;
@@ -205,17 +235,16 @@
         padding: 7px 8px;
       }
       th {
+        border-top: 0;
         color: var(--dim);
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.06em;
-        border-top: 0;
       }
       td:nth-child(2) {
         font-family: var(--ml);
       }
-      .mono,
-      code {
+      .mono {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
         color: var(--dim);
@@ -223,147 +252,133 @@
       .scroll {
         overflow-x: auto;
       }
-      #downloadLink {
-        display: inline-block;
-        margin-top: 10px;
-        color: var(--accent);
-        font-size: 13px;
-      }
       footer {
-        margin-top: 24px;
         color: var(--dim);
         font-size: 12px;
       }
       footer a {
         color: var(--accent);
       }
+      #backendInfo {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
     </style>
   </head>
   <body>
     <main>
-      <header>
-        <h1>Malayalam voice cloning</h1>
-        <p class="hint">
-          Upload or record a voice, then type what it should say. The transcript of your
-          reference clip is filled in automatically — you only need to correct it if it is
-          wrong.
-        </p>
-        <span id="backendInfo">connecting…</span>
-        <div id="backendWarning" class="status"></div>
-      </header>
+      <h1>
+        Malayalam voice cloning
+        <small>Give it a voice, then give it words.</small>
+      </h1>
 
-      <section>
-        <h2><span class="step">0</span> API key</h2>
-        <p class="hint">
-          Leave blank if the service runs without authentication. Sent as
-          <code>X-API-Key</code> and never stored.
-        </p>
-        <input id="apiKey" type="password" autocomplete="off" placeholder="optional" />
-      </section>
+      <div id="backendWarning" class="status"></div>
 
-      <section>
-        <h2><span class="step">1</span> Reference voice</h2>
-        <p class="hint">
-          10–15 seconds of clean speech is ideal. Longer costs generation time on every
-          request without improving the clone. Any format your device produces works —
-          it is converted in the browser.
-        </p>
-        <label for="referenceFile">Upload a clip</label>
-        <input id="referenceFile" type="file" accept="audio/*" />
-        <div class="row">
-          <button id="referenceRecord" class="secondary" type="button">● Record instead</button>
-        </div>
-        <audio id="referencePlayer" controls hidden></audio>
-        <div id="referenceStatus" class="status"></div>
-        <label for="referenceText">What the reference clip says</label>
-        <textarea id="referenceText" class="ml" rows="3" spellcheck="false"></textarea>
-        <p class="hint">
-          This must be the words in the clip above — not the text you want generated. A
-          mismatch is the single most common cause of a clone that sounds right but says
-          the wrong thing.
-        </p>
-        <ul id="referenceAdvisories" hidden></ul>
-        <div class="row">
-          <button id="retranscribe" class="secondary" type="button">Transcribe again</button>
-        </div>
-      </section>
+      <div id="authCard" class="card" hidden>
+        <div class="label">API key</div>
+        <input id="apiKey" type="password" autocomplete="off" />
+      </div>
 
-      <section id="consentSection">
-        <h2><span class="step">2</span> Consent</h2>
-        <p class="hint">
-          Cloning a voice requires the speaker's spoken consent. The service issues a
-          sentence containing their name, today's date and two random words; recording it
-          proves the consent was given now, for this voice.
-        </p>
-        <label for="subjectName">Name of the person whose voice this is</label>
-        <input id="subjectName" type="text" autocomplete="off" />
+      <div class="card">
+        <div class="label">1 · The voice</div>
+        <label class="drop" id="voiceDrop" for="voiceFile">
+          <input id="voiceFile" type="file" accept="audio/*" />
+          <strong>Choose an audio file</strong> or drop one here<br />
+          10–15 seconds of clear speech is plenty
+        </label>
         <div class="row">
-          <button id="challengeButton" type="button">Get consent sentence</button>
+          <button id="voiceRecord" class="ghost" type="button">● Record instead</button>
         </div>
-        <div id="challengeBlock" hidden>
+        <audio id="voicePlayer" controls hidden></audio>
+        <div id="voiceStatus" class="status"></div>
+
+        <div id="consentBlock" hidden>
+          <div class="label">Consent</div>
+          <p class="status">
+            This deployment requires the speaker's spoken consent. Enter their name, then
+            read the sentence aloud and record it.
+          </p>
+          <input id="subjectName" type="text" autocomplete="off" placeholder="Speaker's name" />
+          <div class="row">
+            <button id="challengeButton" class="ghost" type="button">Get sentence</button>
+          </div>
           <p id="challengePhrase" class="ml"></p>
           <div class="row">
-            <button id="consentRecord" class="secondary" type="button">● Record consent</button>
+            <button id="consentRecord" class="ghost" type="button">● Record consent</button>
           </div>
           <audio id="consentPlayer" controls hidden></audio>
         </div>
-        <div id="consentStatus" class="status"></div>
-      </section>
 
-      <section>
-        <h2><span class="step">3</span> Enrol</h2>
-        <label for="voiceName">Voice name</label>
-        <input id="voiceName" type="text" autocomplete="off" placeholder="defaults to the name above" />
-        <div class="row">
-          <button id="enrolButton" type="button">Enrol this voice</button>
+        <!-- Outside the consent block on purpose. It used to live inside, which
+             meant a deployment with consent switched off had no way to enrol at
+             all whenever the automatic path could not run. -->
+        <div class="row" id="enrolRow" hidden>
+          <button id="enrolButton" type="button">Use this voice</button>
         </div>
-        <div id="enrolStatus" class="status"></div>
-      </section>
 
-      <section id="speakSection">
-        <h2><span class="step">4</span> Speak</h2>
-        <p class="hint">
-          With no voice selected this uses the model's own voice, so you can check the
-          service works before enrolling anything.
-        </p>
-        <div id="voicesBlock" hidden>
-          <label for="voiceSelect">Voice</label>
-          <select id="voiceSelect"></select>
-        </div>
-        <label for="speakText">Text to speak</label>
-        <textarea id="speakText" class="ml" rows="6" spellcheck="false"></textarea>
-        <p class="hint">
-          Malayalam, romanised Malayalam, numbers, dates and currency are all handled.
-          Preview shows exactly what the model will be given, chunk by chunk.
-        </p>
+        <details id="voiceAdvanced">
+          <summary>Details</summary>
+          <div class="label">What the clip says</div>
+          <textarea id="referenceText" class="ml" rows="3" spellcheck="false"></textarea>
+          <p class="status">
+            Filled in automatically. It must be the words in the clip, not the text you
+            want generated — a mismatch clones the voice correctly and garbles the words.
+          </p>
+          <div class="row">
+            <button id="retranscribe" class="ghost" type="button">Transcribe again</button>
+          </div>
+          <div class="label">Name</div>
+          <input id="voiceName" type="text" autocomplete="off" placeholder="optional" />
+          <div id="voicesBlock" hidden>
+            <div class="label">Use a previously added voice</div>
+            <select id="voiceSelect"></select>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="label">2 · What it should say</div>
+        <textarea
+          id="speakText"
+          class="ml"
+          rows="6"
+          spellcheck="false"
+          placeholder="ഇവിടെ മലയാളത്തിൽ ടൈപ്പ് ചെയ്യുക…"
+        ></textarea>
         <div class="row">
-          <button id="speakButton" type="button">Generate</button>
-          <button id="analyseButton" class="secondary" type="button">Preview text</button>
+          <button id="speakButton" type="button">Speak</button>
         </div>
         <div id="speakStatus" class="status"></div>
         <audio id="outputPlayer" controls hidden></audio>
         <a id="downloadLink" download="mlvoice.wav" hidden>Download WAV</a>
-        <div id="analysisBlock" hidden>
-          <div id="analysisSummary" class="hint"></div>
-          <div class="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Chunk</th>
-                  <th>Phonemes</th>
-                  <th>Break</th>
-                </tr>
-              </thead>
-              <tbody id="analysisBody"></tbody>
-            </table>
+
+        <details id="analysisDetails">
+          <summary>Show what the model will be given</summary>
+          <div class="row">
+            <button id="analyseButton" class="ghost" type="button">Preview</button>
           </div>
-        </div>
-      </section>
+          <div id="analysisBlock" hidden>
+            <div id="analysisSummary" class="status"></div>
+            <div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Chunk</th>
+                    <th>Phonemes</th>
+                    <th>Break</th>
+                  </tr>
+                </thead>
+                <tbody id="analysisBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+      </div>
 
       <footer>
-        API reference at <a href="/docs">/docs</a> · capabilities at
-        <a href="/v1/info">/v1/info</a>
+        <span id="backendInfo">connecting…</span> ·
+        <a href="/docs">API</a>
       </footer>
     </main>
     <script src="/ui/app.js"></script>

@@ -240,8 +240,12 @@ def _open(browser: Any, base_url: str) -> Iterator[Any]:
     active = context.new_page()
     active.on("pageerror", lambda error: errors.append(str(error)))
     active.goto(f"{base_url}/ui", wait_until="networkidle")
-    active.fill("#apiKey", "test-key")
-    active.dispatch_event("#apiKey", "change")
+    # Only where the page decided a key is needed. Filling it unconditionally
+    # would hang on the deployments this suite exists to check, since the field
+    # is not merely empty there -- it is not on the page.
+    if active.locator("#authCard").is_visible():
+        active.fill("#apiKey", "test-key")
+        active.dispatch_event("#apiKey", "change")
     try:
         yield active
     finally:
@@ -261,6 +265,15 @@ def page_without_consent(browser: Any, service_without_consent: str) -> Iterator
     yield from _open(browser, service_without_consent)
 
 
+def _reveal(page: Any, details_id: str) -> None:
+    """Open a collapsed ``<details>`` by clicking its summary.
+
+    The preview and the transcript field are deliberately tucked away, so a
+    test that wants them has to do what a user would.
+    """
+    page.click(f"#{details_id} > summary")
+
+
 def _settled(page: Any, element: str, *, not_starting_with: str, timeout: int = 30_000) -> str:
     """Wait for a status element to stop showing its in-progress message."""
     page.wait_for_function(
@@ -270,6 +283,39 @@ def _settled(page: Any, element: str, *, not_starting_with: str, timeout: int = 
         timeout=timeout,
     )
     return str(page.inner_text(f"#{element}"))
+
+
+@pytest.fixture(scope="module")
+def service_simple(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """No API keys and no consent: the plainest local configuration.
+
+    This is what someone cloning their own voice on their own laptop ends up
+    with, and the page is expected to show them exactly two inputs.
+    """
+    from mlvoice.api.app import Overrides, create_app
+    from mlvoice.config import Settings
+
+    root = tmp_path_factory.mktemp("simple")
+    settings = Settings(
+        _env_file=None,
+        env="development",
+        api_keys="",
+        tts_backend="dummy",
+        asr_enabled=False,
+        require_consent=False,
+        database_url=f"sqlite:///{root}/mlvoice.db",
+        voice_storage_dir=root / "voices",
+        consent_signing_key="browser-test-consent-key",
+        watermark_key="browser-test-watermark-key",
+        log_level="WARNING",
+    )
+    yield from _serve(create_app(Overrides(settings=settings)))
+
+
+@pytest.fixture
+def page_simple(browser: Any, service_simple: str) -> Iterator[Any]:
+    """A page on the plainest configuration."""
+    yield from _open(browser, service_simple)
 
 
 class TestPageLoads:
@@ -282,122 +328,152 @@ class TestPageLoads:
         assert "dummy backend" in page.inner_text("#backendWarning")
 
 
-class TestSynthesisWithoutEnrolment:
-    def test_the_model_voice_is_usable_before_anything_is_enrolled(self, page: Any) -> None:
-        page.fill("#speakText", "ഹലോ, ഇത് ഒരു പരീക്ഷണം ആണ്.")
-        page.click("#speakButton")
-        status = _settled(page, "speakStatus", not_starting_with="Generating", timeout=60_000)
+class TestOnlyWhatTheServerNeedsIsShown:
+    """The page asks ``/v1/info`` what this deployment requires and hides the
+    rest. Every field on screen is one the user has to think about, so a field
+    the server ignores is worse than no field at all."""
+
+    def test_the_plainest_configuration_shows_two_inputs(self, page_simple: Any) -> None:
+        assert page_simple.locator("#authCard").is_hidden()
+        assert page_simple.locator("#consentBlock").is_hidden()
+        assert page_simple.locator("#voiceFile").count() == 1
+        assert page_simple.locator("#speakText").is_visible()
+
+    def test_the_key_field_appears_when_keys_are_configured(self, page: Any) -> None:
+        assert page.locator("#authCard").is_visible()
+
+    def test_the_consent_step_appears_when_consent_is_required(self, page: Any) -> None:
+        assert page.locator("#consentBlock").is_visible()
+
+    def test_the_consent_step_is_gone_when_it_is_not(self, page_without_consent: Any) -> None:
+        assert page_without_consent.locator("#consentBlock").is_hidden()
+
+
+class TestSpeaking:
+    def test_the_model_voice_works_before_any_voice_is_added(self, page_simple: Any) -> None:
+        """Nothing should stand between opening the page and hearing output."""
+        page_simple.fill("#speakText", "ഹലോ, ഇത് ഒരു പരീക്ഷണം ആണ്.")
+        page_simple.click("#speakButton")
+        status = _settled(
+            page_simple, "speakStatus", not_starting_with="Generating", timeout=60_000
+        )
         assert "of audio in" in status
-        assert not page.locator("#outputPlayer").is_hidden()
-        assert not page.locator("#downloadLink").is_hidden()
+        assert not page_simple.locator("#outputPlayer").is_hidden()
+        assert not page_simple.locator("#downloadLink").is_hidden()
 
-    def test_the_preview_expands_numbers_before_anything_is_generated(self, page: Any) -> None:
-        page.fill("#speakText", "2025 ജനുവരി 5.")
-        page.click("#analyseButton")
-        page.wait_for_selector("#analysisBody tr")
-        assert "രണ്ടായിരത്തിയിരുപത്തിയഞ്ച്" in page.inner_text("#analysisSummary")
+    def test_the_preview_expands_numbers(self, page_simple: Any) -> None:
+        page_simple.fill("#speakText", "2025 ജനുവരി 5.")
+        _reveal(page_simple, "analysisDetails")
+        page_simple.click("#analyseButton")
+        page_simple.wait_for_selector("#analysisBody tr")
+        assert "രണ്ടായിരത്തിയിരുപത്തിയഞ്ച്" in page_simple.inner_text("#analysisSummary")
 
-    def test_markup_in_the_input_is_shown_as_text(self, page: Any) -> None:
+    def test_markup_in_the_input_is_shown_as_text(self, page_simple: Any) -> None:
         """The preview echoes the caller's own text back into the page. Written
         through innerHTML it would execute; it must render as characters."""
-        page.fill("#speakText", "<img src=x onerror=window.__xss=1> ഹലോ.")
-        page.click("#analyseButton")
-        page.wait_for_selector("#analysisBody tr")
-        assert "<img" in page.inner_text("#analysisSummary")
-        assert page.evaluate("() => window.__xss === undefined")
-        assert page.locator("#analysisSummary img").count() == 0
+        page_simple.fill("#speakText", "<img src=x onerror=window.__xss=1> ഹലോ.")
+        _reveal(page_simple, "analysisDetails")
+        page_simple.click("#analyseButton")
+        page_simple.wait_for_selector("#analysisBody tr")
+        assert "<img" in page_simple.inner_text("#analysisSummary")
+        assert page_simple.evaluate("() => window.__xss === undefined")
+        assert page_simple.locator("#analysisSummary img").count() == 0
 
 
-class TestEnrolment:
-    def test_upload_transcribe_consent_enrol_and_speak(
+class TestAddingAVoice:
+    def test_choosing_a_file_is_the_whole_interaction(
+        self, page_simple: Any, reference_wav: Path
+    ) -> None:
+        """No enrol button, no transcript to type, no steps: pick a clip and
+        the voice is ready. This service cannot transcribe, so the page must
+        say what is missing and still accept a typed transcript."""
+        page = page_simple
+        page.set_input_files("#voiceFile", str(reference_wav))
+        page.wait_for_selector("#voicePlayer:not([hidden])")
+        status = _settled(page, "voiceStatus", not_starting_with="Reading")
+        assert "transcribe" in status.lower()
+        assert page.locator("#voiceAdvanced").get_attribute("open") is not None, (
+            "the panel holding the transcript field must open itself, or the user "
+            "is told to type something they cannot see"
+        )
+
+        page.fill("#referenceText", "ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്")
+        page.click("#enrolButton")
+        ready = _settled(page, "voiceStatus", not_starting_with="Adding")
+        assert "Voice ready" in ready, ready
+
+        page.wait_for_function("() => document.querySelectorAll('#voiceSelect option').length > 1")
+        page.fill("#speakText", "നന്ദി.")
+        page.click("#speakButton")
+        spoken = _settled(page, "speakStatus", not_starting_with="Generating", timeout=60_000)
+        assert "of audio in" in spoken, spoken
+
+    def test_the_consent_flow_still_works_where_it_is_required(
         self, page: Any, reference_wav: Path
     ) -> None:
-        page.set_input_files("#referenceFile", str(reference_wav))
-        page.wait_for_selector("#referencePlayer:not([hidden])")
-
-        # Transcription is off on this service, so the fallback must appear and
-        # must leave the field editable rather than dead-ending the flow.
-        status = _settled(page, "referenceStatus", not_starting_with="Converting")
-        assert "transcri" in status.lower()
+        page.set_input_files("#voiceFile", str(reference_wav))
+        page.wait_for_selector("#voicePlayer:not([hidden])")
+        _settled(page, "voiceStatus", not_starting_with="Reading")
         page.fill("#referenceText", "ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്")
 
         page.fill("#subjectName", "രാജൻ നായർ")
         page.click("#challengeButton")
-        page.wait_for_selector("#challengeBlock:not([hidden])")
-        phrase = page.inner_text("#challengePhrase")
-        assert "രാജൻ നായർ" in phrase
+        page.wait_for_function(
+            "() => document.getElementById('challengePhrase').textContent.length > 0"
+        )
+        assert "രാജൻ നായർ" in page.inner_text("#challengePhrase")
 
         page.click("#consentRecord")
         page.wait_for_timeout(1_500)
         page.click("#consentRecord")
         page.wait_for_selector("#consentPlayer:not([hidden])", timeout=15_000)
 
-        page.fill("#voiceName", "Rajan voice")
         page.click("#enrolButton")
-        enrolled = _settled(page, "enrolStatus", not_starting_with="Enrolling")
-        assert enrolled.startswith("Enrolled as voice_"), enrolled
-        assert "consent verified" in enrolled
+        ready = _settled(page, "voiceStatus", not_starting_with="Adding")
+        assert "Voice ready" in ready, ready
 
-        # The status settles before the voice list is refetched, so wait for
-        # the option rather than reading the select the instant it appears.
-        page.wait_for_function("() => document.querySelectorAll('#voiceSelect option').length > 1")
-        options = page.locator("#voiceSelect option").all_inner_texts()
-        assert any("Rajan voice" in option for option in options)
-        assert options[0].startswith("—"), "the model's own voice must stay selectable"
-
-        page.select_option("#voiceSelect", index=1)
-        page.fill("#speakText", "നന്ദി.")
-        page.click("#speakButton")
-        spoken = _settled(page, "speakStatus", not_starting_with="Generating", timeout=60_000)
-        assert "of audio in" in spoken, spoken
-
-    def test_enrolling_without_a_reference_says_so(self, page: Any) -> None:
-        page.click("#enrolButton")
-        assert "reference" in page.inner_text("#enrolStatus")
+    def test_speaking_without_text_says_so(self, page_simple: Any) -> None:
+        page_simple.click("#speakButton")
+        assert "Type something" in page_simple.inner_text("#speakStatus")
 
     def test_a_challenge_needs_a_name(self, page: Any) -> None:
         page.click("#challengeButton")
-        assert "name" in page.inner_text("#consentStatus")
+        assert "name" in page.inner_text("#voiceStatus")
 
 
-class TestConsentDisabled:
-    """What the client does when the server does not require consent.
+class TestNothingIsShownBeforeItIsUsable:
+    """Everything the script reveals must start hidden, in the browser.
 
-    Leaving the step on screen would be the worst outcome: a user reads a
-    sentence aloud, records it, and learns nothing about whether it counted.
+    This is a regression test for a CSS bug that no static check would catch:
+    the browser's own ``[hidden]`` rule is ``display: none`` at author strength
+    zero, so a stylesheet setting ``display: flex`` on a row or
+    ``inline-block`` on a link silently beats it. The page rendered with "Use
+    this voice" and "Download WAV" already showing, offering actions that could
+    not work yet.
     """
 
-    def test_the_consent_step_is_gone(self, page_without_consent: Any) -> None:
-        assert page_without_consent.locator("#consentSection").is_hidden()
+    def test_deferred_controls_are_not_visible_on_load(self, page_simple: Any) -> None:
+        for element in (
+            "enrolRow",
+            "voicePlayer",
+            "consentPlayer",
+            "outputPlayer",
+            "downloadLink",
+            "analysisBlock",
+            "voicesBlock",
+        ):
+            assert page_simple.locator(f"#{element}").is_hidden(), (
+                f"#{element} is visible before anything has revealed it -- check that "
+                "no `display` rule outranks the [hidden] attribute"
+            )
 
-    def test_the_remaining_steps_are_renumbered(self, page_without_consent: Any) -> None:
-        """A visible sequence of 1, 2, 4, 5 reads as a bug."""
-        numbers = page_without_consent.locator(
-            "main > section:not([hidden]) > h2 > .step"
-        ).all_inner_texts()
-        assert numbers == [str(i + 1) for i in range(len(numbers))]
-
-    def test_the_consent_step_is_present_when_it_is_required(self, page: Any) -> None:
-        """The same page, against the default configuration."""
-        assert page.locator("#consentSection").is_visible()
-
-    def test_enrolment_works_without_a_recording(
-        self, page_without_consent: Any, reference_wav: Path
-    ) -> None:
-        page = page_without_consent
-        page.set_input_files("#referenceFile", str(reference_wav))
-        page.wait_for_selector("#referencePlayer:not([hidden])")
-        _settled(page, "referenceStatus", not_starting_with="Converting")
-        page.fill("#referenceText", "ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്")
-        page.fill("#voiceName", "Rajan voice")
-        page.click("#enrolButton")
-        enrolled = _settled(page, "enrolStatus", not_starting_with="Enrolling")
-        assert enrolled.startswith("Enrolled as voice_"), enrolled
-        assert "consent unverified" in enrolled, "an unconsented voice must not read as consented"
-
-    def test_a_voice_still_needs_a_name(self, page_without_consent: Any) -> None:
-        """The name normally falls back to the subject name, which lived in the
-        step that is now gone."""
-        page = page_without_consent
-        page.click("#enrolButton")
-        assert "reference" in page.inner_text("#enrolStatus")
+    def test_the_hidden_attribute_is_enforced_over_display_rules(self, page_simple: Any) -> None:
+        """Directly: give a flex row the attribute and it must disappear."""
+        hidden = page_simple.evaluate(
+            "() => { const row = document.querySelector('.row');"
+            " row.hidden = true;"
+            " const gone = getComputedStyle(row).display === 'none';"
+            " row.hidden = false;"
+            " return gone; }"
+        )
+        assert hidden, "setting .hidden on a .row does not hide it"

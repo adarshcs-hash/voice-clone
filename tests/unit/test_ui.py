@@ -69,7 +69,7 @@ class TestPageAndScriptAgree:
 
         A button containing elements would lose them the first time it is used.
         """
-        for button in ("referenceRecord", "consentRecord"):
+        for button in ("voiceRecord", "consentRecord"):
             body = re.search(rf'<button id="{button}"[^>]*>(.*?)</button>', markup, re.S)
             assert body is not None
             assert "<" not in body.group(1)
@@ -81,9 +81,18 @@ class TestScriptUsesRealApiFields:
     def test_transcribe_fields(self, script: str) -> None:
         from mlvoice.api.schemas import TranscribeResponse
 
-        for field in ("text", "duration_seconds", "advisories", "quality"):
-            assert field in TranscribeResponse.model_fields
-        assert "estimated_snr_db" in script
+        for field in re.findall(r"body\.([a-z_]+)", script):
+            if field in {"text", "duration_seconds"}:
+                assert field in TranscribeResponse.model_fields
+
+    def test_capability_flags_the_page_branches_on_are_reported(self, script: str) -> None:
+        """The page hides the key field, the consent step and the transcript
+        prompt off these. A renamed field would silently show all three."""
+        from mlvoice.api.schemas import InfoResponse
+
+        for field in ("consent_required", "auth_required", "transcription"):
+            assert f"info.{field}" in script
+            assert field in InfoResponse.model_fields
 
     def test_analyze_fields(self, script: str) -> None:
         from mlvoice.api.schemas import AnalyzeResponse, ChunkInfo
