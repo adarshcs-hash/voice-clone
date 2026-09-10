@@ -44,6 +44,14 @@ docker compose -f docker/docker-compose.yml up           # local stack
 The default image has no model runtime, which keeps it small and fast to start.
 The `models` target adds torch and transformers.
 
+Running the IndicF5 backend additionally needs the `indicf5` extra, because the
+model's bundled remote code imports `f5-tts` and `pydub`. `f5-tts` pulls roughly
+thirty transitive dependencies -- gradio, wandb, datasets and matplotlib among
+them -- which exist to serve its own demo and training tooling. Expect to trim
+that for a production image: none of it is reached by the inference path, and
+shipping a demo UI and a telemetry client inside a synthesis service is worth
+avoiding.
+
 ## Health and rollout
 
 | Endpoint | Meaning |

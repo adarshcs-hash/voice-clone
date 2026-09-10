@@ -37,6 +37,7 @@ tests.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Final
@@ -125,15 +126,7 @@ class IndicF5Synthesizer(Synthesizer):
             self._model = model.to(torch.device(self._device)).eval()
         except Exception as exc:
             reason = str(exc)
-            hint = None
-            # The gated-repo failure is the single most likely first-run error,
-            # and the raw 401 does not say what to do about it.
-            if "401" in reason or "gated" in reason.lower() or "restricted" in reason:
-                hint = (
-                    f"{self._model_id} is a gated repository: request access on "
-                    "its model page, then authenticate with `hf auth login` or "
-                    "set HF_TOKEN for the account that was granted access"
-                )
+            hint = _load_failure_hint(reason, self._model_id)
             raise BackendUnavailableError(
                 "could not load the IndicF5 weights",
                 model_id=self._model_id,
@@ -183,6 +176,42 @@ class IndicF5Synthesizer(Synthesizer):
                 ref_text=reference_text,
             )
         return np.asarray(output)
+
+
+_MISSING_DEPS: Final = re.compile(
+    r"requires the following packages that were not found[^:]*:\s*([^\n.]+)"
+)
+
+
+def _load_failure_hint(reason: str, model_id: str) -> str | None:
+    """Turn a load failure into an actionable instruction, where one exists.
+
+    Two failures account for nearly every first run, and neither message says
+    what to do:
+
+    * the repository is gated, and the caller sees a bare 401; and
+    * the model's bundled remote code imports packages that are not declared
+      by this project's dependencies, because they are the model's
+      requirements rather than ours.
+
+    Anything else gets no hint, rather than a misleading one.
+    """
+    lowered = reason.lower()
+    if "401" in reason or "gated" in lowered or "restricted" in lowered:
+        return (
+            f"{model_id} is a gated repository: request access on its model "
+            "page, then authenticate with `hf auth login` or set HF_TOKEN for "
+            "the account that was granted access"
+        )
+    match = _MISSING_DEPS.search(reason)
+    if match:
+        packages = ", ".join(p.strip() for p in match.group(1).split(",") if p.strip())
+        return (
+            f"the model's remote code imports {packages}, which are its own "
+            "requirements rather than this project's: install them with "
+            "`pip install 'mlvoice[indicf5]'`"
+        )
+    return None
 
 
 def _to_float32(raw: np.ndarray) -> np.ndarray:

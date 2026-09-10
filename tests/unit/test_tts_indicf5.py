@@ -67,6 +67,24 @@ class TestLoadFailures:
         assert "gated" in hint
         assert "HF_TOKEN" in hint
 
+    def test_missing_remote_dependencies_name_the_install_command(self) -> None:
+        """IndicF5's bundled code imports f5_tts and pydub, which are the
+        model's requirements rather than this project's."""
+        message = (
+            "This modeling file requires the following packages that were not "
+            "found in your environment: f5_tts, pydub. Run `pip install f5_tts pydub`"
+        )
+        with (
+            patch.dict(sys.modules, _stub_modules(ImportError(message))),
+            pytest.raises(BackendUnavailableError) as excinfo,
+        ):
+            IndicF5Synthesizer(revision="abc123").load()
+        hint = excinfo.value.context.get("hint")
+        assert hint is not None
+        assert "f5_tts" in hint
+        assert "pydub" in hint
+        assert "mlvoice[indicf5]" in hint
+
     def test_unrelated_errors_get_no_misleading_hint(self) -> None:
         with (
             patch.dict(sys.modules, _stub_modules(OSError("No space left on device"))),

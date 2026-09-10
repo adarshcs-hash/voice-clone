@@ -92,8 +92,15 @@ Backends are registered in [`tts/registry.py`](src/mlvoice/tts/registry.py) and
 selected by configuration:
 
 ```bash
+pip install -e ".[indicf5]"
 MLVOICE_TTS_BACKEND=indicf5 MLVOICE_MODEL_REVISION=<commit-sha> mlvoice serve
 ```
+
+The `indicf5` extra is separate from `models` because the model's bundled code
+imports `f5-tts`, which brings roughly thirty transitive dependencies (gradio,
+wandb, datasets, matplotlib among them). Those are the model's requirements,
+not this project's, and they have no place in a deployment that only needs the
+inference path.
 
 The `dummy` backend is a deterministic phoneme-driven signal generator. It is
 not a model; it exists so the API contract, streaming, watermarking and the
