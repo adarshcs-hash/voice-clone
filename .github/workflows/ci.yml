@@ -41,6 +41,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,eval]"
 
+      - name: Package metadata is generatable
+        # A broken pyproject fails at install time, which a green test suite on
+        # an already-installed package cannot catch. Building the wheel
+        # validates every extra, including ones not installed here.
+        run: |
+          pip install build
+          python -m build --wheel --outdir /tmp/dist
+          python -c "from importlib.metadata import metadata; print(metadata('mlvoice')['Version'])"
+
       - name: Ruff lint
         run: ruff check src tests
 

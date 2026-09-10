@@ -125,6 +125,13 @@ mlvoice = "mlvoice.cli:app"
 [project.urls]
 Repository = "https://github.com/adarshcs-hash/voice-clone"
 
+[tool.hatch.metadata]
+# The `indicf5` extra needs AI4Bharat's f5_tts fork from GitHub, which is a PEP
+# 440 direct reference. Hatchling refuses those unless this is set, and it
+# refuses at *metadata* generation, so without it even `pip install -e .`
+# fails: extras are validated whether or not they are requested.
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mlvoice"]
 
