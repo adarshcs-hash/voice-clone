@@ -130,6 +130,22 @@ LEXICON: Final[dict[str, str]] = {
     "undu": "ഉണ്ട്",
     "illa": "ഇല്ല",
     "alla": "അല്ല",
+    # The copula and negation family. Very high frequency, and the rules get
+    # them wrong in a way a listener notices immediately: the retroflex ṇ of
+    # ``ആണ്`` comes out as a dental ``ന``, and the long ``ഏ`` of ``അല്ലേ``
+    # as a short ``എ``.
+    "aanu": "ആണ്",
+    "anu": "ആണ്",
+    "aano": "ആണോ",
+    "aanennu": "ആണെന്ന്",
+    "alle": "അല്ലേ",
+    "ille": "ഇല്ലേ",
+    "venam": "വേണം",
+    "venda": "വേണ്ട",
+    "ariyilla": "അറിയില്ല",
+    "ariyam": "അറിയാം",
+    "enthu": "എന്ത്",
+    "ethu": "ഏത്",
     "nanni": "നന്ദി",
     "nandi": "നന്ദി",
     "sugamano": "സുഖമാണോ",

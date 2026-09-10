@@ -25,7 +25,7 @@ class TestManglishDetection:
     def test_words_carrying_a_malayalam_signal_are_detected(self, word: str) -> None:
         assert is_probably_manglish(word)
 
-    @pytest.mark.parametrize("word", ["poyi", "veedu", "undu"])
+    @pytest.mark.parametrize("word", ["poyi", "veedu", "undu", "aanu", "alle"])
     def test_lexicon_membership_counts_as_evidence(self, word: str) -> None:
         assert is_probably_manglish(word)
 
@@ -68,6 +68,22 @@ class TestTransliteration:
 
     def test_sentence(self) -> None:
         assert transliterate("njan veedu poyi") == "ഞാൻ വീട് പോയി"
+
+    @pytest.mark.parametrize(
+        ("word", "expected"),
+        [
+            ("aanu", "ആണ്"),
+            ("aano", "ആണോ"),
+            ("alle", "അല്ലേ"),
+            ("ille", "ഇല്ലേ"),
+            ("venam", "വേണം"),
+            ("venda", "വേണ്ട"),
+        ],
+    )
+    def test_copula_and_negation_family(self, word: str, expected: str) -> None:
+        """The rules give a dental ``ന`` where Malayalam has retroflex ``ണ``,
+        and a short ``എ`` where it has long ``ഏ``, so these are pinned."""
+        assert transliterate(word) == expected
 
     def test_word_final_consonant_takes_chillu(self) -> None:
         assert transliterate("avan", use_lexicon=False).endswith("ൻ")
