@@ -1,0 +1,185 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mlvoice"
+version = "0.1.0"
+description = "Production-grade Malayalam text-to-speech and voice cloning platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "mlvoice contributors" }]
+keywords = ["malayalam", "tts", "voice-cloning", "speech-synthesis", "indic"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.5",
+  "structlog>=24.4",
+  "typer>=0.12",
+  "numpy>=1.26",
+  "soundfile>=0.12",
+  "sqlalchemy>=2.0",
+  "python-multipart>=0.0.9",
+  # Resampling and loudness are correctness requirements, not extras: linear
+  # interpolation aliases audibly, and RMS is not integrated loudness. Both are
+  # small wheels, so they are core rather than optional.
+  "soxr>=0.4",
+  "pyloudnorm>=0.1.1",
+]
+
+[project.optional-dependencies]
+# Model runtime. Kept optional so the text frontend, API contract and test
+# suite install and run on a CPU-only box with no multi-GB wheels.
+models = [
+  "torch>=2.4",
+  "torchaudio>=2.4",
+  "transformers>=4.44",
+  "huggingface-hub>=0.25",
+]
+# Corpus preparation at scale: the neural VAD and denoiser. The energy VAD and
+# every quality gate are pure NumPy and need none of this.
+data = [
+  "torch>=2.4",
+  "torchaudio>=2.4",
+  "librosa>=0.10",
+  "silero-vad>=5.1",
+  "deepfilternet>=0.5.6",
+]
+# Objective text metrics. Deliberately tiny: the metrics in mlvoice.eval are
+# dependency-free, and jiwer is here only so the test suite can cross-check
+# them against a reference implementation.
+eval = [
+  "jiwer>=3.0",
+]
+# Speaker verification (ECAPA) for consent checks and cloning evaluation.
+speaker = [
+  "torch>=2.4",
+  "torchaudio>=2.4",
+  "speechbrain>=1.0",
+]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=5.0",
+  "pytest-asyncio>=0.24",
+  "httpx>=0.27",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "types-requests",
+  "pre-commit>=3.8",
+]
+
+[project.scripts]
+mlvoice = "mlvoice.cli:app"
+
+[project.urls]
+Repository = "https://github.com/adarshcs-hash/voice-clone"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mlvoice"]
+
+# ----------------------------------------------------------------------------
+# Lint / format
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",      # pycodestyle / pyflakes
+  "I",                # isort
+  "N",                # pep8-naming
+  "UP",               # pyupgrade
+  "B",                # bugbear
+  "C4",               # comprehensions
+  "SIM",              # simplify
+  "RUF",              # ruff-specific
+  "ANN",              # annotations
+  "S",                # bandit security
+  "PTH",              # pathlib
+  "TID",              # tidy imports
+]
+ignore = [
+  "ANN401",  # allow typing.Any where a boundary genuinely is dynamic
+  "RUF001",  # ambiguous-unicode: this project is *about* non-ASCII text
+  "RUF002",
+  "RUF003",
+  "S101",    # assert is fine in tests; production code avoids it by review
+  "SIM905",  # a wrapped `"""...""".split()` word list is more readable than a
+             # 200-element list literal, and this project has several
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "S105", "S106", "S108", "PTH", "SLF001"]
+"src/mlvoice/eval/testset.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mlvoice", "tests"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+# ----------------------------------------------------------------------------
+# Types
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src/mlvoice"]
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+no_implicit_reexport = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+  "soundfile.*",
+  "librosa.*",
+  "pyloudnorm.*",
+  "soxr.*",
+  "torch.*",
+  "torchaudio.*",
+  "transformers.*",
+  "silero_vad.*",
+  "df.*",
+  "speechbrain.*",
+  "jiwer.*",
+  "audioseal.*",
+]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+  "slow: requires model weights or GPU; excluded from the default run",
+  "integration: exercises the assembled service",
+]
+filterwarnings = ["error::DeprecationWarning:mlvoice.*"]
+
+[tool.coverage.run]
+source = ["src/mlvoice"]
+branch = true
+omit = ["*/tts/indicf5.py", "*/audio/vad.py", "*/audio/denoise.py"]
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@(abc\\.)?abstractmethod",
+]

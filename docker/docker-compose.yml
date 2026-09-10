@@ -1,0 +1,35 @@
+# Local development stack. Not a production topology: it runs a single replica
+# with SQLite. For production, point MLVOICE_DATABASE_URL at Postgres, run
+# several replicas behind a load balancer, and move rate limiting to shared
+# state (see docs/operations.md).
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: runtime
+    ports:
+      - "8000:8000"
+    environment:
+      MLVOICE_ENV: development
+      MLVOICE_TTS_BACKEND: dummy
+      MLVOICE_LOG_JSON: "true"
+      MLVOICE_LOG_LEVEL: INFO
+      MLVOICE_API_KEYS: dev-local-key
+      MLVOICE_CONSENT_SIGNING_KEY: dev-consent-signing-key
+      MLVOICE_WATERMARK_KEY: dev-watermark-key
+      MLVOICE_DATABASE_URL: sqlite:////data/mlvoice.db
+      MLVOICE_VOICE_STORAGE_DIR: /data/voices
+    volumes:
+      - mlvoice-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 4
+    restart: unless-stopped
+
+volumes:
+  mlvoice-data:
