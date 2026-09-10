@@ -124,9 +124,7 @@ class TestSpeak:
 
     def test_text_can_come_from_stdin(self, runner: CliRunner, tmp_path: Path) -> None:
         output = tmp_path / "out.wav"
-        result = runner.invoke(
-            app, ["speak", "-o", str(output)], input="ഞാൻ നാട്ടിൽ പോയി"
-        )
+        result = runner.invoke(app, ["speak", "-o", str(output)], input="ഞാൻ നാട്ടിൽ പോയി")
         assert result.exit_code == 0, result.stdout
         assert output.exists()
 
@@ -141,9 +139,14 @@ class TestSpeak:
         result = runner.invoke(
             app,
             [
-                "speak", "ഞാൻ പോയി", "-o", str(output),
-                "--reference-audio", str(reference),
-                "--reference-text-file", str(transcript),
+                "speak",
+                "ഞാൻ പോയി",
+                "-o",
+                str(output),
+                "--reference-audio",
+                str(reference),
+                "--reference-text-file",
+                str(transcript),
             ],
         )
         assert result.exit_code == 0, result.stdout
@@ -159,10 +162,16 @@ class TestSpeak:
         result = runner.invoke(
             app,
             [
-                "speak", "ഞാൻ പോയി", "-o", str(tmp_path / "o.wav"),
-                "--reference-audio", str(reference),
-                "--reference-text", "y",
-                "--reference-text-file", str(transcript),
+                "speak",
+                "ഞാൻ പോയി",
+                "-o",
+                str(tmp_path / "o.wav"),
+                "--reference-audio",
+                str(reference),
+                "--reference-text",
+                "y",
+                "--reference-text-file",
+                str(transcript),
             ],
         )
         assert result.exit_code != 0
