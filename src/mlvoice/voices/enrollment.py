@@ -36,6 +36,7 @@ from mlvoice.audio.vad import trim_silence
 from mlvoice.config import Settings
 from mlvoice.errors import AudioError, ConsentError, ModerationError, ValidationError
 from mlvoice.logging import get_logger
+from mlvoice.protocols import Transcriber
 from mlvoice.safety.moderation import NameBlocklist
 from mlvoice.voices.consent import (
     DEFAULT_VALIDITY,
@@ -71,9 +72,11 @@ class EnrollmentRequest:
         name: Display name for the voice.
         owner_id: Tenant or account that will own it.
         reference_audio: Encoded audio of the voice to clone.
-        reference_text: Verbatim Malayalam transcript of ``reference_audio``.
-            The cloning backend conditions on this; a wrong transcript is the
-            most common cause of a poor clone.
+        reference_text: Verbatim Malayalam transcript of ``reference_audio``,
+            or ``None`` to have it transcribed. The cloning backend conditions
+            on this, and a wrong transcript is the most common cause of a poor
+            clone -- which is why asking a caller to type it is worse than
+            recognising it and letting them correct the result.
         consent_token: Token from :meth:`EnrollmentService.issue_challenge`.
         consent_audio: Encoded recording of the subject reading the challenge.
         dialect: Optional regional label, for corpus and catalogue reporting.
@@ -83,7 +86,7 @@ class EnrollmentRequest:
     name: str
     owner_id: str
     reference_audio: bytes
-    reference_text: str
+    reference_text: str | None
     consent_token: str
     consent_audio: bytes
     dialect: str = "unknown"
@@ -101,6 +104,8 @@ class EnrollmentService:
             ``settings.require_consent`` is set, which production enforces.
         blocklist: Public-figure name blocklist.
         quality_gate: Objective thresholds the reference clip must meet.
+        transcriber: Used when a request supplies no reference transcript.
+            Without one, a transcript becomes mandatory.
     """
 
     def __init__(
@@ -111,10 +116,12 @@ class EnrollmentService:
         verifier: ConsentVerifier | None = None,
         blocklist: NameBlocklist | None = None,
         quality_gate: QualityGate | None = None,
+        transcriber: Transcriber | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._verifier = verifier
+        self._transcriber = transcriber
         self._blocklist = blocklist or NameBlocklist()
         # Reference clips are short, so the corpus silence gate does not apply.
         self._gate = quality_gate or QualityGate(
@@ -191,12 +198,6 @@ class EnrollmentService:
             AudioError: The reference clip fails the quality gate.
             ConsentError: Consent is required and could not be verified.
         """
-        if not request.reference_text.strip():
-            raise ValidationError(
-                "a reference transcript is required; the cloning backend "
-                "conditions on it and a wrong transcript degrades the clone"
-            )
-
         phrase = self._decode_challenge(request.consent_token)
         for candidate in (request.name, phrase.subject_name):
             if self._blocklist.is_blocked(candidate):
@@ -204,6 +205,7 @@ class EnrollmentService:
                 raise ModerationError("this voice name cannot be enrolled", name=candidate)
 
         reference = self._prepare_reference(request.reference_audio)
+        reference_text = self._resolve_transcript(request.reference_text, reference)
         consent_audio = load_audio(
             request.consent_audio, target_sample_rate=self._settings.sample_rate
         )
@@ -257,7 +259,7 @@ class EnrollmentService:
             name=request.name,
             owner_id=request.owner_id,
             reference_audio_path=str(reference_path),
-            reference_text=request.reference_text.strip(),
+            reference_text=reference_text,
             reference_duration_seconds=reference.duration_seconds,
             sample_rate=reference.sample_rate,
             status=VoiceStatus.ACTIVE,
@@ -269,6 +271,34 @@ class EnrollmentService:
             updated_at=now,
         )
         return self._store.create_voice(voice)
+
+    def _resolve_transcript(self, supplied: str | None, reference: Audio) -> str:
+        """Return the reference transcript, recognising it when not supplied.
+
+        Raises:
+            ValidationError: No transcript was given and no transcriber is
+                configured, so there is nothing to condition the clone on.
+        """
+        if supplied is not None and supplied.strip():
+            return supplied.strip()
+        if self._transcriber is None:
+            raise ValidationError(
+                "a reference transcript is required when transcription is "
+                "unavailable: the cloning backend conditions on it, and a "
+                "missing or wrong transcript degrades the clone"
+            )
+        recognised = self._transcriber.transcribe(reference).strip()
+        if not recognised:
+            raise ValidationError(
+                "the reference recording could not be transcribed; it may be "
+                "silent, too noisy, or not speech"
+            )
+        log.info(
+            "reference transcript recognised",
+            transcriber=getattr(self._transcriber, "name", "unknown"),
+            characters=len(recognised),
+        )
+        return recognised
 
     def _prepare_reference(self, encoded: bytes) -> Audio:
         """Decode, trim, level and gate the reference clip.

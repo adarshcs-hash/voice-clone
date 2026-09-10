@@ -24,6 +24,7 @@ from fastapi import Depends, Header, Request
 
 from mlvoice.config import Settings
 from mlvoice.errors import AuthenticationError, RateLimitedError
+from mlvoice.protocols import Transcriber
 from mlvoice.safety.watermark import Watermarker
 from mlvoice.text.pipeline import TextPipeline
 from mlvoice.tts.base import Synthesizer
@@ -37,6 +38,7 @@ __all__ = [
     "get_settings_dep",
     "get_store",
     "get_synthesizer",
+    "get_transcriber",
     "get_watermarker",
     "rate_limit",
     "require_api_key",
@@ -84,6 +86,12 @@ def get_enrollment_service(request: Request) -> EnrollmentService:
     """Return the enrolment service."""
     service: EnrollmentService = request.app.state.enrollment
     return service
+
+
+def get_transcriber(request: Request) -> Transcriber | None:
+    """Return the transcriber, or ``None`` when recognition is disabled."""
+    transcriber: Transcriber | None = request.app.state.transcriber
+    return transcriber
 
 
 def get_watermarker(request: Request) -> Watermarker | None:

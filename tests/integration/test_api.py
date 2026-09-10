@@ -7,6 +7,8 @@ round-trip through HTTP.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -137,6 +139,102 @@ class TestStartupWarmUp:
         with TestClient(app) as client:
             # Startup completed despite the warm-up failing.
             assert client.get("/healthz").json()["status"] == "ok"
+
+
+class TestTranscription:
+    """Transcription removes the worst step in the flow: asking a caller to
+    type the transcript of their own recording. It is also an optional runtime,
+    so its absence must degrade rather than take the service down."""
+
+    @pytest.fixture
+    def transcribing_client(self, settings: Settings, transcriber: FakeTranscriber):
+        from mlvoice.api.app import Overrides, create_app
+
+        transcriber.text = "ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്"
+        app = create_app(Overrides(settings=settings, transcriber=transcriber))
+        with TestClient(app) as client:
+            yield client
+
+    def test_transcribe_returns_text_and_quality(
+        self, transcribing_client: TestClient, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        body = transcribing_client.post(
+            "/v1/transcribe",
+            files={"audio": ("ref.wav", reference_bytes, "audio/wav")},
+            headers=auth,
+        ).json()
+        assert body["text"] == "ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്"
+        assert body["duration_seconds"] > 0
+        assert body["quality"]["estimated_snr_db"] > 0
+        assert body["transcriber"]
+
+    def test_enrolment_without_a_transcript_transcribes(
+        self, transcribing_client: TestClient, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        challenge = transcribing_client.post(
+            "/v1/voices/challenge", json={"subject_name": "രാജൻ"}, headers=auth
+        ).json()
+        response = transcribing_client.post(
+            "/v1/voices",
+            headers=auth,
+            data={"name": "Rajan", "consent_token": challenge["token"]},
+            files={
+                "reference_audio": ("r.wav", reference_bytes, "audio/wav"),
+                "consent_audio": ("c.wav", reference_bytes, "audio/wav"),
+            },
+        )
+        # Consent fails here because the stub returns the reference transcript
+        # rather than the challenge phrase; what matters is that the missing
+        # reference transcript was not itself the objection.
+        assert response.status_code != 422
+        assert "reference transcript" not in response.text
+
+    def test_transcribe_is_refused_when_disabled(
+        self, client: TestClient, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        """The default fixture has no transcriber, so the endpoint must say so
+        rather than fail obscurely."""
+        response = client.post(
+            "/v1/transcribe",
+            files={"audio": ("ref.wav", reference_bytes, "audio/wav")},
+            headers=auth,
+        )
+        assert response.status_code == 422
+        assert "transcription is disabled" in response.json()["message"]
+
+    def test_service_starts_without_transcription(self, client: TestClient) -> None:
+        """An optional runtime being absent must not take the process down."""
+        assert client.get("/healthz").json()["status"] == "ok"
+
+    def test_production_refuses_to_start_without_transcription(self, tmp_path: Path) -> None:
+        """Production mandates consent, and consent cannot be verified without
+        recognition, so silently disabling it would be worse than refusing."""
+        from mlvoice.api.app import Overrides, create_app
+        from mlvoice.errors import ConfigurationError
+
+        class Unloadable:
+            name = "unloadable"
+
+            def load(self) -> None:
+                raise RuntimeError("no weights here")
+
+            def transcribe(self, audio) -> str:
+                return ""
+
+        production = Settings(
+            _env_file=None,
+            env="production",
+            api_keys="live",
+            tts_backend="indicf5",
+            model_revision="abc123",
+            consent_signing_key="k",
+            watermark_key="w",
+            database_url=f"sqlite:///{tmp_path}/p.db",
+            voice_storage_dir=tmp_path / "voices",
+        )
+        app = create_app(Overrides(settings=production, transcriber=Unloadable()))
+        with pytest.raises(ConfigurationError, match="consent verification"), TestClient(app):
+            pass
 
 
 class TestAuthentication:

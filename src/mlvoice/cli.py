@@ -263,12 +263,14 @@ def speak(
     should use ``--file``: shell quoting mangles paragraph breaks, and a
     mis-quoted 700-character Malayalam script is hard to spot.
 
-    Cloning from a local clip requires both ``--reference-audio`` and a
-    transcript (``--reference-text`` or ``--reference-text-file``). The
-    transcript must be what the reference recording *already says*, not the text
-    being generated: the backend aligns the two, and a mismatch clones the voice
+    Cloning needs ``--reference-audio``. A transcript of that clip is what the
+    backend conditions on; supply it with ``--reference-text`` or
+    ``--reference-text-file``, or omit it and the clip is transcribed. The
+    transcript must be what the recording *already says*, not the text being
+    generated: the backend aligns the two, and a mismatch clones the voice
     correctly while garbling the words.
     """
+    from mlvoice.asr import build_transcriber
     from mlvoice.audio.io import load_audio, save_audio
     from mlvoice.config import get_settings
     from mlvoice.text.pipeline import TextPipeline
@@ -280,20 +282,31 @@ def speak(
         if reference_text is not None:
             raise typer.BadParameter("give --reference-text or --reference-text-file, not both")
         reference_text = reference_text_file.read_text(encoding="utf-8").strip()
-    if bool(reference_audio) != bool(reference_text):
-        raise typer.BadParameter(
-            "--reference-audio and a transcript (--reference-text or "
-            "--reference-text-file) must be given together"
-        )
-
     settings = get_settings()
     synthesizer = build_synthesizer(settings)
     synthesizer.load()
 
     prompt = None
-    if reference_audio is not None and reference_text is not None:
+    if reference_audio is not None:
+        reference = load_audio(reference_audio, target_sample_rate=settings.sample_rate)
+        if reference_text is None:
+            transcriber = build_transcriber(settings)
+            if transcriber is None:
+                raise typer.BadParameter(
+                    "no transcript given and transcription is disabled: pass "
+                    "--reference-text/--reference-text-file, or enable it with "
+                    "MLVOICE_ASR_ENABLED=true"
+                )
+            typer.secho("transcribing the reference clip...", fg=typer.colors.CYAN, err=True)
+            reference_text = transcriber.transcribe(reference)
+            if not reference_text.strip():
+                raise typer.BadParameter(
+                    "the reference clip could not be transcribed; it may be "
+                    "silent, too noisy, or not speech"
+                )
+            typer.secho(f"reference transcript: {reference_text}", fg=typer.colors.CYAN, err=True)
         prompt = ReferencePrompt(
-            audio=load_audio(reference_audio, target_sample_rate=settings.sample_rate),
+            audio=reference,
             text=reference_text,
             voice_id="cli-reference",
         )

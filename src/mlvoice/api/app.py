@@ -25,8 +25,11 @@ from mlvoice.__version__ import __version__
 from mlvoice.api.middleware import RequestContextMiddleware, install_exception_handlers
 from mlvoice.api.ratelimit import InMemoryRateLimiter, RateLimiter
 from mlvoice.api.routes import health, tts, voices
+from mlvoice.asr import build_transcriber
 from mlvoice.config import Settings, get_settings
+from mlvoice.errors import ConfigurationError
 from mlvoice.logging import configure_logging, get_logger
+from mlvoice.protocols import Transcriber
 from mlvoice.safety.moderation import Moderator, NameBlocklist, PatternModerator
 from mlvoice.safety.watermark import SpreadSpectrumWatermarker, Watermarker
 from mlvoice.synthesis import SynthesisService
@@ -73,6 +76,7 @@ class Overrides:
     """
 
     synthesizer: Synthesizer | None = None
+    transcriber: Transcriber | None = None
     store: VoiceStore | None = None
     pipeline: TextPipeline | None = None
     watermarker: Watermarker | None = None
@@ -111,6 +115,45 @@ def _build_watermarker(settings: Settings) -> Watermarker | None:
 
 
 _WARMUP_TEXT: Final = "ഒന്ന് രണ്ട് മൂന്ന്."
+
+
+def _load_transcriber(transcriber: Transcriber | None, settings: Settings) -> Transcriber | None:
+    """Load the transcriber, degrading to ``None`` outside production.
+
+    Recognition is an optional runtime: it needs the ``models`` extra, which a
+    deployment serving only the text frontend has no reason to install. Taking
+    the whole process down because an optional dependency is absent would be
+    wrong, so a load failure disables transcription and says so. Callers that
+    need it then fail at request time with a specific error, which is where the
+    caller can act on it.
+
+    Production is different. It mandates consent, consent verification needs
+    recognition to confirm the phrase was spoken, and a deployment that mandates
+    consent while being unable to verify it is worse than one that refuses to
+    start.
+    """
+    if transcriber is None:
+        return None
+    loader = getattr(transcriber, "load", None)
+    if loader is None:
+        return transcriber
+    try:
+        loader()
+    except Exception as exc:
+        if settings.is_production and settings.require_consent:
+            raise ConfigurationError(
+                "consent verification requires transcription, which failed to "
+                "load; install the 'models' extra or set a reachable "
+                "MLVOICE_ASR_MODEL_ID",
+                reason=str(exc),
+            ) from exc
+        log.warning(
+            "transcription unavailable; reference transcripts must be supplied "
+            "and consent cannot be verified",
+            reason=str(exc),
+        )
+        return None
+    return transcriber
 
 
 def _warm_up(service: SynthesisService) -> None:
@@ -179,11 +222,27 @@ def create_app(overrides: Overrides | None = None) -> FastAPI:
             if settings.blocked_voice_names_file
             else NameBlocklist()
         )
+
+        # Recognition serves two jobs: transcribing a reference clip so callers
+        # need not type it, and verifying that a consent phrase was actually
+        # spoken. Consent verification has been unusable without it.
+        transcriber = (
+            overrides.transcriber
+            if overrides.transcriber is not None
+            else build_transcriber(settings)
+        )
+        transcriber = _load_transcriber(transcriber, settings)
+        application.state.transcriber = transcriber
+
+        verifier = overrides.consent_verifier
+        if verifier is None and transcriber is not None:
+            verifier = ConsentVerifier(transcriber=transcriber)
         application.state.enrollment = EnrollmentService(
             settings,
             application.state.store,
-            verifier=overrides.consent_verifier,
+            verifier=verifier,
             blocklist=blocklist,
+            transcriber=transcriber,
         )
 
         synthesizer = overrides.synthesizer or build_synthesizer(settings)
@@ -213,6 +272,7 @@ def create_app(overrides: Overrides | None = None) -> FastAPI:
             model_id=synthesizer.info.model_id,
             watermarking=application.state.watermarker is not None,
             auth_enabled=bool(settings.parsed_api_keys),
+            transcription=transcriber is not None,
         )
         yield
         log.info("service shutting down")

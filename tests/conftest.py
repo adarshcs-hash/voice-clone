@@ -79,13 +79,13 @@ def _warm_native_extensions() -> None:
     Importing them here puts them in the pre-patch snapshot, so the restore
     keeps them.
     """
+    import contextlib
+
     import soundfile  # noqa: F401
     import soxr  # noqa: F401
 
-    try:
+    with contextlib.suppress(ImportError):  # optional dependency
         import pyloudnorm  # noqa: F401
-    except ImportError:  # pragma: no cover - optional
-        pass
 
 
 @pytest.fixture

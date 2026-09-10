@@ -26,12 +26,15 @@ from mlvoice.api.deps import Caller, get_enrollment_service, get_store, rate_lim
 from mlvoice.api.schemas import (
     ChallengeRequest,
     ChallengeResponse,
+    TranscribeResponse,
     VoiceListResponse,
     VoiceResponse,
     WatermarkResponse,
 )
 from mlvoice.audio.io import load_audio
+from mlvoice.audio.quality import measure_quality
 from mlvoice.errors import ValidationError
+from mlvoice.tts.base import ReferencePrompt
 from mlvoice.voices.enrollment import EnrollmentRequest, EnrollmentService
 from mlvoice.voices.store import Voice, VoiceStatus, VoiceStore
 
@@ -110,18 +113,23 @@ async def enroll_voice(
     service: Annotated[EnrollmentService, Depends(get_enrollment_service)],
     caller: Annotated[Caller, Depends(rate_limit)],
     name: Annotated[str, Form(min_length=1, max_length=200)],
-    reference_text: Annotated[str, Form(min_length=1, max_length=4000)],
     consent_token: Annotated[str, Form(min_length=1)],
     reference_audio: Annotated[UploadFile, File()],
     consent_audio: Annotated[UploadFile, File()],
+    reference_text: Annotated[str | None, Form(max_length=4000)] = None,
     dialect: Annotated[str, Form()] = "unknown",
     gender: Annotated[str, Form()] = "unknown",
 ) -> VoiceResponse:
     """Enrol a voice from a reference clip and a verified consent recording.
 
-    ``reference_text`` must be the verbatim Malayalam transcript of
-    ``reference_audio``: the cloning backend conditions on it, and a wrong
-    transcript is the most common cause of a poor clone.
+    ``reference_text`` is the verbatim Malayalam transcript of
+    ``reference_audio``. It may be omitted, in which case the clip is
+    transcribed: the cloning backend conditions on this text, and a wrong
+    transcript is the most common cause of a poor clone, so recognising it is
+    better than asking a caller to type the transcript of their own recording.
+
+    Clients that can show the transcript should call ``POST /v1/transcribe``
+    first and submit the corrected text, which is better than either extreme.
     """
     voice = service.enroll(
         EnrollmentRequest(
@@ -136,6 +144,50 @@ async def enroll_voice(
         )
     )
     return _to_response(voice, consent_verified=voice.consent_id is not None)
+
+
+@router.post(
+    "/v1/transcribe",
+    response_model=TranscribeResponse,
+    summary="Transcribe a clip, for review before enrolment",
+)
+async def transcribe(
+    request: Request,
+    caller: Annotated[Caller, Depends(rate_limit)],
+    audio: Annotated[UploadFile, File()],
+) -> TranscribeResponse:
+    """Recognise the speech in an uploaded clip and measure its quality.
+
+    The intended flow is: upload, show this text, let the user fix it, then
+    enrol with the corrected transcript. That is better than requiring the user
+    to type it from scratch and better than using recognition output blind.
+
+    Raises:
+        ValidationError: Recognition is disabled on this deployment.
+    """
+    transcriber = request.app.state.transcriber
+    if transcriber is None:
+        raise ValidationError(
+            "transcription is disabled on this deployment; supply the "
+            "reference transcript with the enrolment request instead"
+        )
+    settings = request.app.state.settings
+    data = await _read_upload(audio, "audio")
+    clip = load_audio(data, target_sample_rate=settings.sample_rate)
+
+    text = transcriber.transcribe(clip)
+    prompt_advisories: list[str] = []
+    if text.strip():
+        prompt_advisories = list(
+            ReferencePrompt(audio=clip, text=text, voice_id="preview").advisories()
+        )
+    return TranscribeResponse(
+        text=text,
+        duration_seconds=round(clip.duration_seconds, 3),
+        transcriber=getattr(transcriber, "name", "unknown"),
+        quality=measure_quality(clip).as_dict(),
+        advisories=prompt_advisories,
+    )
 
 
 @router.get("/v1/voices", response_model=VoiceListResponse, summary="List voices")

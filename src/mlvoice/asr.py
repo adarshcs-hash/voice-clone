@@ -38,15 +38,40 @@ from __future__ import annotations
 from typing import Any, Final
 
 from mlvoice.audio.io import Audio, resample
+from mlvoice.config import Settings
 from mlvoice.errors import BackendUnavailableError
 from mlvoice.logging import get_logger
+from mlvoice.protocols import Transcriber
 
-__all__ = ["ASR_MODEL_SAMPLE_RATE", "TransformersTranscriber"]
+__all__ = ["ASR_MODEL_SAMPLE_RATE", "TransformersTranscriber", "build_transcriber"]
 
 log = get_logger(__name__)
 
 ASR_MODEL_SAMPLE_RATE: Final = 16_000
 """Whisper and the wav2vec2/conformer families all expect 16 kHz."""
+
+
+def build_transcriber(settings: Settings) -> Transcriber | None:
+    """Construct the configured transcriber, or ``None`` when disabled.
+
+    Returning ``None`` rather than a stub is deliberate: callers must decide
+    what to do without recognition, and the answers differ. Enrolment can
+    require the caller to supply a transcript; consent verification cannot
+    proceed at all, because an unverified consent record is worse than none.
+
+    The transcriber is not loaded here; call
+    :meth:`TransformersTranscriber.load` during startup so that a
+    weight-loading failure surfaces before the process accepts traffic.
+    """
+    if not settings.asr_enabled:
+        return None
+    return TransformersTranscriber(
+        model_id=settings.asr_model_id,
+        revision=settings.asr_revision,
+        device=settings.device,
+        language=settings.asr_language,
+        trust_remote_code=settings.asr_trust_remote_code,
+    )
 
 
 class TransformersTranscriber:

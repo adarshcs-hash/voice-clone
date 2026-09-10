@@ -22,6 +22,7 @@ __all__ = [
     "HealthResponse",
     "InfoResponse",
     "SynthesizeRequest",
+    "TranscribeResponse",
     "VoiceListResponse",
     "VoiceResponse",
     "WatermarkResponse",
@@ -140,6 +141,30 @@ class VoiceListResponse(BaseModel):
 
     voices: list[VoiceResponse]
     count: int
+
+
+class TranscribeResponse(BaseModel):
+    """Recognised text for an uploaded clip.
+
+    Returned so a client can *show* the transcript and let the user correct it.
+    Recognition is not perfect, but a visible approximate transcript beats an
+    invisible wrong one -- and a wrong reference transcript clones the voice
+    correctly while garbling the words.
+    """
+
+    text: str
+    duration_seconds: float
+    transcriber: str
+    quality: dict[str, float] = Field(
+        default_factory=dict,
+        description="Objective measurements of the clip, so a client can warn "
+        "about a recording that is too noisy or too short to clone from.",
+    )
+    advisories: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal concerns, such as a clip long enough to slow "
+        "every subsequent generation.",
+    )
 
 
 class WatermarkResponse(BaseModel):
