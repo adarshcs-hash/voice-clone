@@ -23,11 +23,13 @@ from enum import StrEnum
 from typing import Final
 
 from mlvoice.errors import ValidationError
+from mlvoice.text.chars import is_consonant, is_independent_vowel
 
 __all__ = ["BreakStrength", "Chunk", "ChunkConfig", "chunk"]
 
-# Sentence terminators, including the danda that survives in some Malayalam copy.
-_SENTENCE_END: Final[re.Pattern[str]] = re.compile(r"(?<=[.!?।॥])\s+")
+# Candidate sentence boundaries: a terminator followed by whitespace. Whether a
+# full stop really ends a sentence is decided by :func:`_is_initial`.
+_SENTENCE_BOUNDARY: Final[re.Pattern[str]] = re.compile(r"([.!?।॥])(\s+)")
 # Clause-level breaks, used when a sentence is still too long.
 _CLAUSE_END: Final[re.Pattern[str]] = re.compile(r"(?<=[,;:—-])\s+")
 _WHITESPACE: Final[re.Pattern[str]] = re.compile(r"\s+")
@@ -76,10 +78,17 @@ class ChunkConfig:
         min_chars: Chunks shorter than this are merged forward where possible,
             so that a stray two-word fragment does not get its own generation
             pass with its own prosody.
+        pack_sentences: Merge consecutive sentences into one chunk while they
+            fit within ``max_chars``. On by default, because a reference-prompt
+            model pays for its reference clip once per generation: fewer, fuller
+            chunks are markedly faster and keep prosody continuous. Turn it off
+            for streaming, where a small first chunk means a lower
+            time-to-first-audio.
     """
 
     max_chars: int = 220
     min_chars: int = 40
+    pack_sentences: bool = True
 
     def __post_init__(self) -> None:
         if self.max_chars < 1:
@@ -93,6 +102,86 @@ class ChunkConfig:
 
 
 DEFAULT_CONFIG: Final = ChunkConfig()
+
+
+def _letter_count(token: str) -> int:
+    """Count orthographic letters, not codepoints.
+
+    A Malayalam letter is a base consonant or independent vowel plus any vowel
+    signs and chandrakkala hanging off it, so ``വി`` is one letter across two
+    codepoints while ``ശരി`` is two letters across three. Counting bases is
+    what distinguishes an initial from a short word.
+    """
+    return sum(
+        1
+        for ch in token
+        if is_consonant(ch) or is_independent_vowel(ch) or (ch.isalpha() and ch.isascii())
+    )
+
+
+def _is_initial(text_before_stop: str) -> bool:
+    """True if the full stop at the end of ``text_before_stop`` marks an initial.
+
+    ``ഒ. ജെ ജനീഷ്`` and ``വി. ഡി സതീശൻ`` are one name each, not three
+    sentences. Initials are near-universal in Malayalam names in news and
+    social copy, and splitting at them produces a hard stop mid-name plus a
+    fragment that the model then renders with its own sentence prosody.
+
+    The test is a single orthographic letter immediately before the stop.
+    That distinguishes ``വി.`` (one letter) from ``ശരി.`` (two), which a
+    codepoint count cannot.
+    """
+    token = text_before_stop.rsplit(maxsplit=1)[-1] if text_before_stop.strip() else ""
+    return _letter_count(token) == 1
+
+
+def _split_sentences(paragraph: str) -> list[str]:
+    """Split into sentences, keeping initials attached to their names."""
+    sentences: list[str] = []
+    start = 0
+    for match in _SENTENCE_BOUNDARY.finditer(paragraph):
+        terminator, end = match.group(1), match.end()
+        if terminator == "." and _is_initial(paragraph[start : match.start()]):
+            continue
+        piece = paragraph[start : match.start() + 1].strip()
+        if piece:
+            sentences.append(piece)
+        start = end
+    tail = paragraph[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _pack(
+    pieces: list[tuple[str, BreakStrength]], max_chars: int
+) -> list[tuple[str, BreakStrength]]:
+    """Merge consecutive pieces up to ``max_chars``, stopping at a paragraph.
+
+    A reference-prompt model re-synthesises the reference clip for *every*
+    generation and discards it, so each extra chunk costs the reference's
+    duration again. Ten short sentences against a ten-second reference throw
+    away a hundred seconds of audio. Packing them into as few generations as
+    the model handles well is therefore a large speed win, and it keeps
+    sentence-to-sentence prosody inside one generation rather than stitching it
+    across a seam.
+
+    Paragraph breaks are never packed across: that pause is meaningful, and the
+    text either side of it is not one prosodic unit.
+    """
+    packed: list[tuple[str, BreakStrength]] = []
+    for text, strength in pieces:
+        if packed:
+            previous_text, previous_strength = packed[-1]
+            joinable = (
+                previous_strength not in (BreakStrength.PARAGRAPH, BreakStrength.WORD)
+                and len(previous_text) + 1 + len(text) <= max_chars
+            )
+            if joinable:
+                packed[-1] = (f"{previous_text} {text}", strength)
+                continue
+        packed.append((text, strength))
+    return packed
 
 
 def _split_words(text: str, max_chars: int) -> list[str]:
@@ -130,7 +219,7 @@ def _split_to_limit(
     if len(text) <= max_chars:
         return [(text, strength)]
 
-    clauses = _CLAUSE_END.split(text)
+    clauses = _CLAUSE_END.split(text)  # noqa: RUF100
     if len(clauses) > 1:
         out: list[tuple[str, BreakStrength]] = []
         for i, clause in enumerate(clauses):
@@ -186,7 +275,7 @@ def chunk(text: str, config: ChunkConfig = DEFAULT_CONFIG) -> list[Chunk]:
     pieces: list[tuple[str, BreakStrength]] = []
     paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
     for p_index, paragraph in enumerate(paragraphs):
-        sentences = [s for s in _SENTENCE_END.split(paragraph.strip()) if s.strip()]
+        sentences = _split_sentences(paragraph.strip())
         for s_index, sentence in enumerate(sentences):
             last_sentence = s_index == len(sentences) - 1
             last_paragraph = p_index == len(paragraphs) - 1
@@ -198,6 +287,8 @@ def chunk(text: str, config: ChunkConfig = DEFAULT_CONFIG) -> list[Chunk]:
                 tail = BreakStrength.SENTENCE
             pieces.extend(_split_to_limit(sentence, config.max_chars, tail))
 
+    if config.pack_sentences:
+        pieces = _pack(pieces, config.max_chars)
     pieces = _merge_short(pieces, config)
     return [
         Chunk(text=text_piece, break_after=strength, index=i)

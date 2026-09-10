@@ -171,6 +171,21 @@ produces two mispronounced fragments, so the chunker **never** splits a word: it
 tries sentence boundaries, then clause boundaries, then word boundaries, and
 emits an over-long word whole.
 
+**Initials are not sentence ends.** `ഒ. ജെ ജനീഷ്` and `വി. ഡി സതീശൻ` are one
+name each. Initials are near-universal in Malayalam names in news and social
+copy, so a naive split on `.` puts a hard stop mid-name and hands the remaining
+fragment its own sentence prosody. The test is a single *orthographic letter*
+before the stop — `വി` is one letter across two codepoints, `ശരി` is two across
+three — which a codepoint count cannot distinguish.
+
+**Sentences are packed.** A reference-prompt model re-synthesises its reference
+clip on every generation and discards it, so each extra chunk costs the
+reference's duration again. Ten short sentences against a ten-second reference
+throw away a hundred seconds of audio. Consecutive sentences are therefore
+merged up to `max_chars`, never across a paragraph break. Set
+`pack_sentences=False` for streaming, where a small first chunk buys a lower
+time-to-first-audio.
+
 ## What needs native-speaker review before production
 
 1. The numeral tables above 100,000, especially the lakh/crore stem forms.

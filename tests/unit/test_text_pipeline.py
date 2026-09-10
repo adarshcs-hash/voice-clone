@@ -12,11 +12,13 @@ from mlvoice.text.pipeline import TextPipeline, TextPipelineConfig
 
 class TestChunking:
     def test_sentences_are_separated(self) -> None:
-        chunks = chunk("ഒന്ന്. രണ്ട്.", ChunkConfig(max_chars=40, min_chars=1))
+        config = ChunkConfig(max_chars=40, min_chars=1, pack_sentences=False)
+        chunks = chunk("ഒന്ന്. രണ്ട്.", config)
         assert [c.text for c in chunks] == ["ഒന്ന്.", "രണ്ട്."]
 
     def test_break_strengths_are_assigned(self) -> None:
-        chunks = chunk("ഒന്ന്. രണ്ട്.", ChunkConfig(max_chars=40, min_chars=1))
+        config = ChunkConfig(max_chars=40, min_chars=1, pack_sentences=False)
+        chunks = chunk("ഒന്ന്. രണ്ട്.", config)
         assert chunks[0].break_after is BreakStrength.SENTENCE
         assert chunks[-1].break_after is BreakStrength.NONE
 
@@ -59,6 +61,66 @@ class TestChunking:
             ChunkConfig(max_chars=10, min_chars=10)
         with pytest.raises(ValidationError):
             ChunkConfig(max_chars=0, min_chars=0)
+
+
+class TestInitials:
+    """``ഒ. ജെ ജനീഷ്`` is one name, not three sentences. Initials are
+    near-universal in Malayalam names in news and social copy, and splitting at
+    them puts a hard stop mid-name and hands the fragment its own sentence
+    prosody."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "വളരെ പ്രശസ്തനായ കായിക വകുപ്പ് മന്ത്രി ആയിരിക്കുന്ന ഒ. ജെ ജനീഷാണ് ഉദ്ഘാടനം ചെയ്തത്.",
+            "ചടങ്ങിൽ പ്രധാന അതിഥിയായി പങ്കെടുത്തത് ബഹുമാനപ്പെട്ട വി. ഡി സതീശൻ ആയിരുന്നു എന്ന് അറിഞ്ഞു.",
+            "അദ്ദേഹത്തിന്റെ പേര് വളരെ വ്യക്തമായി രേഖപ്പെടുത്തിയിരിക്കുന്നത് കെ. ആർ നാരായണൻ എന്നാണ്.",
+        ],
+    )
+    def test_an_initial_does_not_end_a_sentence(self, text: str) -> None:
+        assert len(chunk(text, ChunkConfig(pack_sentences=False))) == 1
+
+    def test_a_short_word_still_ends_a_sentence(self) -> None:
+        """``ശരി`` is two letters, not one, so this is a real boundary."""
+        config = ChunkConfig(max_chars=20, min_chars=1, pack_sentences=False)
+        assert len(chunk("ഇത് ശരി. അതെ ശരി.", config)) == 2
+
+    def test_latin_initials_too(self) -> None:
+        config = ChunkConfig(pack_sentences=False)
+        assert len(chunk("The report by A. B. Nair was published today.", config)) == 1
+
+
+class TestSentencePacking:
+    """A reference-prompt model re-synthesises its reference clip for every
+    generation and discards it, so each extra chunk costs the reference's
+    duration again. Packing is the difference between paying it five times and
+    ten."""
+
+    def test_consecutive_sentences_are_packed(self) -> None:
+        text = "ഒന്നാമത്തെ വാക്യം. രണ്ടാമത്തെ വാക്യം. മൂന്നാമത്തെ വാക്യം."
+        packed = chunk(text, ChunkConfig(max_chars=220, min_chars=1))
+        unpacked = chunk(text, ChunkConfig(max_chars=220, min_chars=1, pack_sentences=False))
+        assert len(packed) == 1
+        assert len(unpacked) == 3
+
+    def test_packing_respects_max_chars(self) -> None:
+        text = " ".join(f"വാക്യം നമ്പർ {i} ഇവിടെ അവസാനിക്കുന്നു." for i in range(12))
+        for c in chunk(text, ChunkConfig(max_chars=100, min_chars=1)):
+            assert len(c.text) <= 100
+
+    def test_packing_never_crosses_a_paragraph_break(self) -> None:
+        chunks = chunk("ഒന്ന്.\n\nരണ്ട്.", ChunkConfig(max_chars=220, min_chars=1))
+        assert len(chunks) == 2
+        assert chunks[0].break_after is BreakStrength.PARAGRAPH
+
+    def test_packing_preserves_the_final_break(self) -> None:
+        chunks = chunk("ഒന്ന്. രണ്ട്.", ChunkConfig(max_chars=220, min_chars=1))
+        assert chunks[-1].break_after is BreakStrength.NONE
+
+    def test_packing_loses_no_content(self) -> None:
+        text = "ഒന്ന്. രണ്ട് മൂന്ന്. നാല്, അഞ്ച്. ആറ്."
+        joined = "".join(c.text for c in chunk(text, ChunkConfig(max_chars=220, min_chars=1)))
+        assert joined.replace(" ", "") == text.replace(" ", "")
 
 
 class TestPipeline:
