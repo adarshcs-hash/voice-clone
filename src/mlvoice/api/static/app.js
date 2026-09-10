@@ -149,7 +149,11 @@ async function useReference({ blob, seconds }) {
   state.referenceWav = blob;
   $("referencePlayer").src = URL.createObjectURL(blob);
   $("referencePlayer").hidden = false;
-  setStatus("referenceStatus", `${seconds.toFixed(1)}s captured. Transcribing…`);
+  setStatus(
+    "referenceStatus",
+    `${seconds.toFixed(1)}s captured. Transcribing… the first one on a fresh ` +
+      "install downloads the recogniser, which takes minutes.",
+  );
   await transcribeReference();
 }
 

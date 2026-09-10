@@ -69,6 +69,48 @@ The page is served `no-store` and the script `max-age=3600`. That asymmetry is
 deliberate -- a cached page outliving a redeploy would bind element ids the new
 script no longer looks up, which fails as dead buttons rather than as an error.
 
+## Transcription and startup
+
+`MLVOICE_ASR_ENABLED` turns reference-clip transcription on. The recogniser
+loads **on first use**, not at startup, and that default was bought with an
+outage: on a cold cache the default Whisper model is a 3 GB download, and
+pulling it inside the lifespan handler left the process stuck before it bound a
+socket — no API, no web client, no `/healthz` — while an optional feature
+fetched weights behind a progress bar that logged nothing.
+
+So the first transcription is slow, and the web client says so while it waits.
+Set `MLVOICE_ASR_EAGER_LOAD=true` where that trade inverts: behind a readiness
+probe, a slow rollout is cheaper than a slow first request. Production with
+consent enabled loads eagerly regardless and refuses to start if it cannot,
+because a replica that mandates consent while unable to verify it is worse than
+one that does not come up.
+
+Either way the load logs `loading transcriber` with the model id *before* it
+starts, so a stalled download is distinguishable from a hung process. To take
+the download out of the request path entirely, fetch the weights ahead of time
+into the same cache (`HF_HOME`) — a container image should bake them in.
+
+## Transcription and startup
+
+`MLVOICE_ASR_ENABLED` turns reference-clip transcription on. The recogniser
+loads **on first use**, not at startup, and that default was bought with an
+outage: on a cold cache the default Whisper model is a 3 GB download, and
+pulling it inside the lifespan handler left the process stuck before it bound a
+socket -- no API, no web client, no `/healthz` -- while an optional feature
+fetched weights behind a progress bar that logged nothing.
+
+So the first transcription is slow, and the web client says so while it waits.
+Set `MLVOICE_ASR_EAGER_LOAD=true` where that trade inverts: behind a readiness
+probe, a slow rollout is cheaper than a slow first request. Production with
+consent enabled loads eagerly regardless and refuses to start if it cannot,
+because a replica that mandates consent while unable to verify it is worse than
+one that does not come up.
+
+Either way the load logs `loading transcriber` with the model id *before* it
+starts, so a stalled download is distinguishable from a hung process. To keep
+the download out of the request path entirely, fetch the weights ahead of time
+into the same cache (`HF_HOME`); a container image should bake them in.
+
 ## Health and rollout
 
 | Endpoint | Meaning |

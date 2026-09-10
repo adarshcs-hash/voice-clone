@@ -118,7 +118,7 @@ _WARMUP_TEXT: Final = "ഒന്ന് രണ്ട് മൂന്ന്."
 
 
 def _load_transcriber(transcriber: Transcriber | None, settings: Settings) -> Transcriber | None:
-    """Load the transcriber, degrading to ``None`` outside production.
+    """Prepare the transcriber, loading it now only when that is the right cost.
 
     Recognition is an optional runtime: it needs the ``models`` extra, which a
     deployment serving only the text frontend has no reason to install. Taking
@@ -127,20 +127,39 @@ def _load_transcriber(transcriber: Transcriber | None, settings: Settings) -> Tr
     need it then fail at request time with a specific error, which is where the
     caller can act on it.
 
-    Production is different. It mandates consent, consent verification needs
-    recognition to confirm the phrase was spoken, and a deployment that mandates
-    consent while being unable to verify it is worse than one that refuses to
-    start.
+    Loading it during startup is off by default, because doing it cost a real
+    outage: on a cold cache the default Whisper model is a three-gigabyte
+    download, and pulling it inside the lifespan handler left the process stuck
+    before it bound a socket -- no API, no web client, no ``/healthz`` -- while
+    an *optional* feature fetched weights behind a progress bar with no log line
+    to explain it. Deferring the load moves that cost onto the first
+    transcription, where the caller who asked for it is the one waiting.
+
+    Production with consent enabled is the exception and still loads eagerly.
+    It mandates consent, consent verification needs recognition to confirm the
+    phrase was spoken, and a replica that accepts traffic while unable to
+    verify consent is worse than one that refuses to start.
     """
     if transcriber is None:
         return None
     loader = getattr(transcriber, "load", None)
     if loader is None:
         return transcriber
+    required = settings.is_production and settings.require_consent
+    if not (required or settings.asr_eager_load):
+        log.info(
+            "transcription will load on first use",
+            model_id=settings.asr_model_id,
+            hint=(
+                "the first request pays for the download; set "
+                "MLVOICE_ASR_EAGER_LOAD=true to pay it at startup instead"
+            ),
+        )
+        return transcriber
     try:
         loader()
     except Exception as exc:
-        if settings.is_production and settings.require_consent:
+        if required:
             raise ConfigurationError(
                 "consent verification requires transcription, which failed to "
                 "load; install the 'models' extra or set a reachable "

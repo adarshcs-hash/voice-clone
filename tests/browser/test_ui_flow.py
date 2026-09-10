@@ -290,6 +290,9 @@ class TestEnrolment:
         assert enrolled.startswith("Enrolled as voice_"), enrolled
         assert "consent verified" in enrolled
 
+        # The status settles before the voice list is refetched, so wait for
+        # the option rather than reading the select the instant it appears.
+        page.wait_for_function("() => document.querySelectorAll('#voiceSelect option').length > 1")
         options = page.locator("#voiceSelect option").all_inner_texts()
         assert any("Rajan voice" in option for option in options)
         assert options[0].startswith("—"), "the model's own voice must stay selectable"

@@ -190,17 +190,39 @@ class TestTranscription:
         assert "reference transcript" not in response.text
 
     def test_transcribe_is_refused_when_disabled(
+        self, settings: Settings, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        """Switched off is not the same as broken, and the message must not
+        send the caller looking for a missing dependency."""
+        from mlvoice.api.app import Overrides, create_app
+
+        off = settings.model_copy(update={"asr_enabled": False})
+        with TestClient(create_app(Overrides(settings=off))) as client:
+            response = client.post(
+                "/v1/transcribe",
+                files={"audio": ("ref.wav", reference_bytes, "audio/wav")},
+                headers=auth,
+            )
+        assert response.status_code == 422
+        assert "transcription is disabled" in response.json()["message"]
+
+    def test_transcribe_names_the_missing_runtime(
         self, client: TestClient, auth: dict[str, str], reference_bytes: bytes
     ) -> None:
-        """The default fixture has no transcriber, so the endpoint must say so
-        rather than fail obscurely."""
+        """Enabled but unloadable is a 503, not a 422.
+
+        The default fixture has recognition enabled and no model runtime, and
+        since the load is deferred to first use this is where it surfaces. The
+        answer has to name the extra: "disabled" would be a lie, and a bare 503
+        sends the operator to the wrong place.
+        """
         response = client.post(
             "/v1/transcribe",
             files={"audio": ("ref.wav", reference_bytes, "audio/wav")},
             headers=auth,
         )
-        assert response.status_code == 422
-        assert "transcription is disabled" in response.json()["message"]
+        assert response.status_code == 503
+        assert "models" in response.json()["message"]
 
     def test_service_starts_without_transcription(self, client: TestClient) -> None:
         """An optional runtime being absent must not take the process down."""

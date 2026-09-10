@@ -154,3 +154,99 @@ class TestFailures:
 
         with patch.dict(sys.modules, _stubs(fake_pipeline)):
             assert TransformersTranscriber().transcribe(silence) == ""
+
+
+class TestStartupLoading:
+    """When the recogniser is loaded, and when it deliberately is not.
+
+    This exists because the eager version caused an outage: on a cold cache the
+    default model is a three-gigabyte download, and doing it inside the lifespan
+    handler left the process stuck before it bound a socket -- the API, the web
+    client and ``/healthz`` all unreachable while an optional feature fetched
+    weights. The rule is now "load on first use, unless a readiness probe makes
+    a slow rollout the cheaper failure".
+    """
+
+    class RecordingTranscriber:
+        """A transcriber that reports whether anyone asked it to load."""
+
+        name = "recording"
+
+        def __init__(self, *, fails: bool = False) -> None:
+            self.loads = 0
+            self.fails = fails
+
+        def load(self) -> None:
+            self.loads += 1
+            if self.fails:
+                raise BackendUnavailableError("no weights here")
+
+        def transcribe(self, audio: Audio) -> str:
+            return ""
+
+    def _settings(self, **overrides: Any) -> Any:
+        from mlvoice.config import Settings
+
+        base: dict[str, Any] = {
+            "_env_file": None,
+            "env": "development",
+            "api_keys": "k",
+            "tts_backend": "dummy",
+            "consent_signing_key": "c",
+            "watermark_key": "w",
+        }
+        base.update(overrides)
+        return Settings(**base)
+
+    def test_the_default_defers_the_download(self) -> None:
+        from mlvoice.api.app import _load_transcriber
+
+        transcriber = self.RecordingTranscriber()
+        assert _load_transcriber(transcriber, self._settings()) is transcriber
+        assert transcriber.loads == 0
+
+    def test_eager_load_is_opt_in(self) -> None:
+        from mlvoice.api.app import _load_transcriber
+
+        transcriber = self.RecordingTranscriber()
+        _load_transcriber(transcriber, self._settings(asr_eager_load=True))
+        assert transcriber.loads == 1
+
+    def test_a_deferred_transcriber_is_still_wired_up(self) -> None:
+        """Deferring the load must not disable the feature -- the object has to
+        reach the enrolment service or nothing can transcribe later."""
+        from mlvoice.api.app import _load_transcriber
+
+        transcriber = self.RecordingTranscriber(fails=True)
+        assert _load_transcriber(transcriber, self._settings()) is transcriber
+
+    def test_an_eager_failure_disables_transcription_outside_production(self) -> None:
+        from mlvoice.api.app import _load_transcriber
+
+        transcriber = self.RecordingTranscriber(fails=True)
+        assert _load_transcriber(transcriber, self._settings(asr_eager_load=True)) is None
+
+    def test_production_with_consent_loads_eagerly_whatever_the_setting(self) -> None:
+        """A replica that mandates consent while unable to verify it must not
+        report itself ready, so here a slow rollout is the cheaper failure."""
+        from mlvoice.api.app import _load_transcriber
+
+        transcriber = self.RecordingTranscriber()
+        production = self._settings(
+            env="production",
+            model_revision="abc123",
+            tts_backend="indicf5",
+            asr_eager_load=False,
+        )
+        _load_transcriber(transcriber, production)
+        assert transcriber.loads == 1
+
+    def test_production_refuses_to_start_when_it_cannot_verify_consent(self) -> None:
+        from mlvoice.api.app import _load_transcriber
+        from mlvoice.errors import ConfigurationError
+
+        production = self._settings(
+            env="production", model_revision="abc123", tts_backend="indicf5"
+        )
+        with pytest.raises(ConfigurationError):
+            _load_transcriber(self.RecordingTranscriber(fails=True), production)

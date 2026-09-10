@@ -61,6 +61,21 @@ class Settings(BaseSettings):
 
     # -- transcription ------------------------------------------------------
     asr_enabled: bool = True
+    asr_eager_load: bool = False
+    """Load the recogniser during startup rather than on first use.
+
+    Off by default, and that default was bought the hard way. Recognition is a
+    convenience for one endpoint; synthesis is the service. Loading it at
+    startup meant a cold weights cache -- three gigabytes for the default
+    Whisper model -- held the whole process in `Waiting for application
+    startup` behind a bare progress bar, with the API, the web client and
+    `/healthz` all unreachable because an optional feature was downloading.
+    Deferring it makes the first transcription slow instead, which is visible
+    to the caller who asked for it and fatal to nothing.
+
+    Turn it on where a slow first request is worse than a slow rollout: a
+    production replica behind a readiness probe, which is why production with
+    consent enabled loads eagerly regardless of this setting."""
     """Transcribe a reference clip when no transcript is supplied.
 
     Without this, a caller must type the transcript of their own recording,

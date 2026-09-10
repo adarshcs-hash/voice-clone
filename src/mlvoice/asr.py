@@ -28,6 +28,12 @@ multilingual Whisper. Candidates, best first:
     Fast, and weak enough on Malayalam that it should be treated as a smoke
     test rather than a transcriber.
 
+The two community fine-tunes are named from the model hubs' Malayalam ASR
+listings and have not been benchmarked here; treat their ordering as a starting
+point for your own measurement, not as a result. Confirm an id resolves before
+depending on it -- a wrong one surfaces as a load failure, which is loud, but
+only once something tries to transcribe.
+
 The model id is configuration, not code, because which of these is best will
 change and because the right answer depends on whether accuracy or latency
 matters more for a given deployment.
@@ -134,6 +140,17 @@ class TransformersTranscriber:
                 "transcription requires the 'models' extra: pip install 'mlvoice[models]'"
             ) from exc
 
+        # Logged *before* the call, not after. On a cold cache this line is
+        # followed by a multi-gigabyte download whose only other output is a
+        # progress bar on stderr; without the model id in the log, a stalled
+        # fetch is indistinguishable from a hung process.
+        log.info(
+            "loading transcriber",
+            model_id=self._model_id,
+            revision=self._revision,
+            device=self._device,
+            hint="a cold cache downloads the weights first; this can take minutes",
+        )
         try:
             self._pipeline = pipeline(
                 "automatic-speech-recognition",
