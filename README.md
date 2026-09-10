@@ -100,9 +100,15 @@ not a model; it exists so the API contract, streaming, watermarking and the
 whole test suite run on a CPU-only box in seconds. Production configuration
 refuses it.
 
-> `IndicF5` requires `trust_remote_code=True`, which is remote code execution by
+> **`ai4bharat/IndicF5` is a gated repository.** Request access on its model
+> page, then authenticate (`hf auth login`, or set `HF_TOKEN`) for the account
+> that was granted access. Without that, loading fails with a 401
+> `GatedRepoError`.
+>
+> It also requires `trust_remote_code=True`, which is remote code execution by
 > design. `MLVOICE_MODEL_REVISION` must pin a commit in production; startup
-> refuses an unpinned revision.
+> refuses an unpinned revision. Pin `transformers<5`: the model's bundled code
+> targets the 4.x API.
 
 ## Voice cloning requires verified consent
 

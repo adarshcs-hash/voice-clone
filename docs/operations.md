@@ -113,8 +113,11 @@ touching the model.
 ## Runbook
 
 **Model will not load.** Check `/v1/info` for the revision and the logs for
-`backend_unavailable`. Usually a bad revision pin, a missing `models` extra, or
-no disk space for the weights cache.
+`backend_unavailable`; the error carries a `hint` for the common causes. In
+order of likelihood: the repository is gated and the process has no token for
+an account with access (401 / `GatedRepoError` — set `HF_TOKEN`); `transformers`
+is 5.x while the model's bundled remote code targets 4.x; a bad revision pin; a
+missing `models` extra; or no disk space for the weights cache.
 
 **Latency has regressed.** Compare `X-Real-Time-Factor` against your baseline.
 If chunk count per request has grown, someone is sending longer text; the

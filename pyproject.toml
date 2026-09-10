@@ -43,7 +43,11 @@ dependencies = [
 models = [
   "torch>=2.4",
   "torchaudio>=2.4",
-  "transformers>=4.44",
+  # Upper-bounded on purpose. IndicF5 ships its own modelling code, loaded via
+  # trust_remote_code, written against the transformers 4.x API. Remote code
+  # does not move with the library, so a 5.x major cannot be assumed
+  # compatible; raise this bound once the model card says 5.x is supported.
+  "transformers>=4.44,<5",
   "huggingface-hub>=0.25",
 ]
 # Corpus preparation at scale: the neural VAD and denoiser. The energy VAD and
@@ -175,7 +179,7 @@ filterwarnings = ["error::DeprecationWarning:mlvoice.*"]
 [tool.coverage.run]
 source = ["src/mlvoice"]
 branch = true
-omit = ["*/tts/indicf5.py", "*/audio/vad.py", "*/audio/denoise.py"]
+omit = ["*/audio/vad.py", "*/audio/denoise.py"]
 
 [tool.coverage.report]
 exclude_also = [

@@ -34,8 +34,11 @@ building on it. Dataset licences change, and re-releases change the numbers.
 - **Corpus licences vary between the datasets above, and some are
   research-only.** Each must be checked at source, per dataset, and recorded in
   `license_id` on every row it contributes.
-- **`ai4bharat/IndicF5`** — check the model card's licence before commercial
-  deployment.
+- **`ai4bharat/IndicF5`** — **gated**. Access is requested and granted per
+  account, so plan for it: a CI job or a fresh container needs a token for an
+  account that has been granted access, and the terms you accept to obtain
+  access are part of your licence position. Check the model card's licence
+  before commercial deployment.
 - **Coqui XTTS-v2** — the Coqui Public Model Licence is **non-commercial**. It
   also has no Malayalam support, so it is not a candidate here regardless.
 - **Broadcast and streaming audio** (news channels, YouTube, film) — do not

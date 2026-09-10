@@ -6,6 +6,15 @@ Malayalam included. It clones zero-shot from a reference clip plus that clip's
 transcript, which makes it the strongest open starting point for a Malayalam
 voice product and the model this project targets first.
 
+Access
+------
+The repository is **gated**: fetching it requires requesting access on the
+model page and then authenticating, or ``load`` fails with a 401 and a
+``GatedRepoError``. Grant access to the account whose token the process will
+use, and provide the token through ``HF_TOKEN`` (or a prior ``hf auth login``).
+In a container, pass ``HF_TOKEN`` as a secret and mount a warm
+``HF_HOME`` cache so a cold replica does not re-fetch several gigabytes.
+
 Operational notes
 -----------------
 *   **The reference transcript matters.** The model conditions on ``ref_text``;
@@ -115,11 +124,22 @@ class IndicF5Synthesizer(Synthesizer):
             )
             self._model = model.to(torch.device(self._device)).eval()
         except Exception as exc:
+            reason = str(exc)
+            hint = None
+            # The gated-repo failure is the single most likely first-run error,
+            # and the raw 401 does not say what to do about it.
+            if "401" in reason or "gated" in reason.lower() or "restricted" in reason:
+                hint = (
+                    f"{self._model_id} is a gated repository: request access on "
+                    "its model page, then authenticate with `hf auth login` or "
+                    "set HF_TOKEN for the account that was granted access"
+                )
             raise BackendUnavailableError(
                 "could not load the IndicF5 weights",
                 model_id=self._model_id,
                 revision=self._revision,
-                reason=str(exc),
+                reason=reason,
+                **({"hint": hint} if hint else {}),
             ) from exc
         log.info(
             "indicf5 loaded", model_id=self._model_id, revision=self._revision, device=self._device
