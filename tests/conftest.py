@@ -65,6 +65,29 @@ def make_speech(
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _warm_native_extensions() -> None:
+    """Import compiled extensions before any test patches ``sys.modules``.
+
+    ``patch.dict(sys.modules, ...)`` restores the mapping on exit, which deletes
+    keys added *inside* the block. If a compiled extension is first imported
+    there, the next import re-initialises it -- and re-initialising an already
+    loaded C extension aborts the interpreter rather than raising, so the
+    failure surfaces as a fatal crash in whichever unrelated test happens to
+    come next.
+
+    Importing them here puts them in the pre-patch snapshot, so the restore
+    keeps them.
+    """
+    import soundfile  # noqa: F401
+    import soxr  # noqa: F401
+
+    try:
+        import pyloudnorm  # noqa: F401
+    except ImportError:  # pragma: no cover - optional
+        pass
+
+
 @pytest.fixture
 def speech() -> SpeechFactory:
     """Factory for speech-like audio."""
