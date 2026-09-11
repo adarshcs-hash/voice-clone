@@ -66,6 +66,13 @@ nothing.
 Never write caller text through `innerHTML`. The preview echoes what the user
 typed back into the page; `textContent` and DOM construction only.
 
+Anything that takes more than a moment needs a spinner, a bar and a running
+seconds counter, and must clear all three on every exit path including early
+returns — a bar that outlives its operation says "still working" about
+something that has stopped. Test those against the slow-backend fixture in
+`tests/browser/`, not the dummy one: racing a millisecond response makes the
+assertion pass or fail by scheduling luck.
+
 Run `make test-browser` for anything behavioural. It skips without a browser,
 so a green `make check` is not evidence that a handler works.
 

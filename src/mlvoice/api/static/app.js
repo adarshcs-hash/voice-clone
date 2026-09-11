@@ -19,6 +19,8 @@
 
 const state = {
   referenceWav: null,
+  referenceName: "",
+  referenceSeconds: 0,
   consentWav: null,
   challengeToken: null,
   voiceId: null,
@@ -34,10 +36,76 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const apiKey = () => $("apiKey").value.trim();
 
+/* ------------------------------------------------------------- feedback ---
+ * Two operations here are slow enough that silence reads as breakage:
+ * transcription downloads a recogniser the first time it runs, and synthesis
+ * on CPU takes about a minute. Neither can report progress -- the server does
+ * not know how far through a flow-matching generation it is -- so what is
+ * shown instead is that something is happening and for how long: a spinner, an
+ * indeterminate bar, and a seconds counter that keeps moving.
+ *
+ * The counter is the load-bearing part. "Generating…" freezes; "Generating…
+ * 47s" is visibly alive, and tells the user whether to keep waiting.
+ */
+
+const elapsedTimers = new Map();
+
+function stopElapsed(id) {
+  const timer = elapsedTimers.get(id);
+  if (timer !== undefined) {
+    clearInterval(timer);
+    elapsedTimers.delete(id);
+  }
+}
+
 function setStatus(id, message, kind = "info") {
+  stopElapsed(id);
   const node = $(id);
-  node.textContent = message;
   node.className = `status ${kind}`;
+  node.replaceChildren();
+  if (kind === "busy") node.appendChild(document.createElement("span")).className = "spin";
+  /* textContent stays exactly the message: the spinner is an empty element and
+   * the counter lives in its own span, so anything reading this node's text --
+   * a test, a screen reader announcement -- sees a sentence, not decoration. */
+  node.appendChild(document.createTextNode(message));
+  return node;
+}
+
+function setBusy(id, message, { progress } = {}) {
+  const node = setStatus(id, message, "busy");
+  const counter = document.createElement("span");
+  counter.className = "elapsed";
+  node.appendChild(counter);
+  const started = Date.now();
+  const tick = () => {
+    const seconds = Math.round((Date.now() - started) / 1000);
+    counter.textContent = seconds > 0 ? `${seconds}s` : "";
+  };
+  tick();
+  elapsedTimers.set(id, setInterval(tick, 1000));
+  if (progress) $(progress).hidden = false;
+}
+
+function clearProgress(...ids) {
+  ids.forEach((id) => {
+    $(id).hidden = true;
+  });
+}
+
+/* A button that stays clickable and unchanged during a minute of work invites
+ * a second click, and the second request is what turns a slow page into a
+ * queue. */
+function setButtonBusy(id, busyLabel) {
+  const button = $(id);
+  if (!button.dataset.idleLabel) button.dataset.idleLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = busyLabel;
+}
+
+function setButtonIdle(id) {
+  const button = $(id);
+  button.disabled = false;
+  if (button.dataset.idleLabel) button.textContent = button.dataset.idleLabel;
 }
 
 async function request(path, options = {}) {
@@ -156,6 +224,7 @@ const consentRecorder = new Recorder();
 
 async function useReference({ blob, seconds }) {
   state.referenceWav = blob;
+  state.referenceSeconds = seconds;
   state.voiceId = null;
   $("voicePlayer").src = URL.createObjectURL(blob);
   $("voicePlayer").hidden = false;
@@ -163,24 +232,32 @@ async function useReference({ blob, seconds }) {
    * case, and this is what is left when it cannot run -- no transcriber, a
    * transcript worth correcting, or consent still to record. */
   $("enrolRow").hidden = false;
+  /* The chip, not the status line: the status line is about to say
+   * "Transcribing…", and a confirmation written there would be gone before it
+   * could be read. */
+  const summary = $("voiceSummary");
+  summary.textContent = `✓ ${state.referenceName || "recording"} · ${seconds.toFixed(1)}s`;
+  summary.hidden = false;
   await transcribeReference({ thenEnrol: !state.consentRequired });
 }
 
 async function transcribeReference({ thenEnrol = false } = {}) {
   if (!state.transcription) {
+    clearProgress("voiceProgress");
     $("voiceAdvanced").open = true;
     setStatus(
       "voiceStatus",
       "This deployment cannot transcribe. Type what the clip says under Details, " +
-        "then it is ready to use.",
+        "then press Use this voice.",
       "warn",
     );
     return;
   }
-  setStatus(
+  setBusy(
     "voiceStatus",
-    "Listening to your clip… the first one on a fresh install downloads the " +
-      "recogniser, which takes a few minutes.",
+    "Transcribing the clip… the first one on a fresh install downloads the " +
+      "recogniser, which can take minutes.",
+    { progress: "voiceProgress" },
   );
   const form = new FormData();
   form.append("audio", state.referenceWav, "reference.wav");
@@ -188,11 +265,13 @@ async function transcribeReference({ thenEnrol = false } = {}) {
     const response = await request("/v1/transcribe", { method: "POST", body: form });
     const body = await response.json();
     $("referenceText").value = body.text;
-    setStatus("voiceStatus", `Heard ${body.duration_seconds.toFixed(1)}s of speech.`, "ok");
+    clearProgress("voiceProgress");
+    setStatus("voiceStatus", `Transcribed ${body.duration_seconds.toFixed(1)}s of speech.`, "ok");
     if (thenEnrol) await enrol();
   } catch (error) {
     /* Recoverable: the transcript can be typed. Open the panel that holds the
      * field rather than leaving the user to find it. */
+    clearProgress("voiceProgress");
     $("voiceAdvanced").open = true;
     setStatus(
       "voiceStatus",
@@ -261,16 +340,25 @@ async function enrol() {
   if (state.challengeToken) form.append("consent_token", state.challengeToken);
   if (state.consentWav) form.append("consent_audio", state.consentWav, "consent.wav");
 
-  setStatus("voiceStatus", "Adding the voice…");
+  setBusy("voiceStatus", "Adding the voice…", { progress: "voiceProgress" });
+  setButtonBusy("enrolButton", "Adding…");
   try {
     const response = await request("/v1/voices", { method: "POST", body: form });
     const voice = await response.json();
     state.voiceId = voice.id;
     $("enrolRow").hidden = true;
-    setStatus("voiceStatus", "Voice ready. Type something below.", "ok");
+    setStatus(
+      "voiceStatus",
+      `Voice ready — ${voice.name}, ${voice.reference_duration_seconds.toFixed(1)}s ` +
+        "of reference. Type something below.",
+      "ok",
+    );
     await loadVoices();
   } catch (error) {
     setStatus("voiceStatus", error.message, "error");
+  } finally {
+    clearProgress("voiceProgress");
+    setButtonIdle("enrolButton");
   }
 }
 
@@ -379,8 +467,15 @@ async function speak() {
     return;
   }
   const started = performance.now();
-  setStatus("speakStatus", "Generating… on CPU this takes a while.");
-  $("speakButton").disabled = true;
+  /* The message names the expected order of magnitude, because the honest
+   * answer to "how long?" on this model is "about a minute per sentence on
+   * CPU" and a user who does not know that assumes it has hung. */
+  setBusy("speakStatus", "Generating… about a minute per sentence on CPU.", {
+    progress: "speakProgress",
+  });
+  setButtonBusy("speakButton", "Generating…");
+  $("outputPlayer").hidden = true;
+  $("downloadLink").hidden = true;
   try {
     const response = await request("/v1/tts", {
       method: "POST",
@@ -408,7 +503,8 @@ async function speak() {
   } catch (error) {
     setStatus("speakStatus", error.message, "error");
   } finally {
-    $("speakButton").disabled = false;
+    clearProgress("speakProgress");
+    setButtonIdle("speakButton");
   }
 }
 
@@ -427,7 +523,7 @@ function bindRecorder(recorder, button, onDone, statusId) {
       button.dataset.idle = button.textContent;
       button.textContent = "■ Stop recording";
       button.classList.add("recording");
-      setStatus(statusId, "Recording… speak now, then press stop.");
+      setBusy(statusId, "Recording… speak now, then press stop.");
     } catch (error) {
       setStatus(statusId, `Microphone unavailable: ${error.message}`, "error");
     }
@@ -436,11 +532,21 @@ function bindRecorder(recorder, button, onDone, statusId) {
 
 async function acceptFile(file) {
   if (!file) return;
-  setStatus("voiceStatus", `Reading ${file.name}…`);
+  /* Named, because "Reading…" on its own does not confirm that the file the
+   * user picked is the file the page got -- which is the first thing they
+   * want to know after a drag-and-drop. */
+  state.referenceName = file.name;
+  setBusy("voiceStatus", `Reading ${file.name}…`, { progress: "voiceProgress" });
   try {
     await useReference(await toWav(await file.arrayBuffer()));
   } catch (error) {
-    setStatus("voiceStatus", `Could not read that file: ${error.message}`, "error");
+    clearProgress("voiceProgress");
+    setStatus(
+      "voiceStatus",
+      `Could not read ${file.name}: ${error.message}. ` +
+        "It needs to be audio this browser can decode.",
+      "error",
+    );
   }
 }
 
@@ -469,7 +575,15 @@ function applyCapabilities() {
 window.addEventListener("DOMContentLoaded", async () => {
   $("voiceFile").addEventListener("change", (event) => acceptFile(event.target.files[0]));
   bindDropTarget();
-  bindRecorder(referenceRecorder, $("voiceRecord"), useReference, "voiceStatus");
+  bindRecorder(
+    referenceRecorder,
+    $("voiceRecord"),
+    (captured) => {
+      state.referenceName = "";
+      return useReference(captured);
+    },
+    "voiceStatus",
+  );
   bindRecorder(
     consentRecorder,
     $("consentRecord"),

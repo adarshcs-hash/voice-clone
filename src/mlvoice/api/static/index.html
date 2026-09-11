@@ -168,11 +168,17 @@
         width: 100%;
         margin-top: 12px;
       }
+      /* Deliberately not a flex container: the text preview renders a summary
+         with <br> line breaks into one of these, and flex items would lay
+         those out side by side. */
       .status {
         font-size: 13px;
         color: var(--dim);
         margin-top: 10px;
         min-height: 1.2em;
+      }
+      .status:empty {
+        display: none;
       }
       .status.ok {
         color: var(--ok);
@@ -182,6 +188,87 @@
       }
       .status.error {
         color: var(--error);
+      }
+      .status.busy {
+        color: var(--ink);
+      }
+      /* A spinning ring rather than a changing word. Transcription on a cold
+         cache takes minutes and synthesis on CPU takes a minute; static text
+         through either is indistinguishable from a frozen page, which is the
+         one thing the UI must never look like. */
+      .spin {
+        display: inline-block;
+        vertical-align: -2px;
+        width: 12px;
+        height: 12px;
+        margin-right: 7px;
+        border: 2px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+      .status.ok .spin,
+      .status.error .spin,
+      .status.warn .spin {
+        display: none;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spin {
+          animation-duration: 2.4s;
+        }
+        .bar::after {
+          animation: none;
+          width: 100%;
+          opacity: 0.35;
+        }
+      }
+      /* Indeterminate, because the server cannot tell us how far through a
+         flow-matching generation it is. It conveys "working", not "nearly
+         done" -- a fake percentage would be a lie that erodes trust in every
+         other number on the page. */
+      .bar {
+        position: relative;
+        overflow: hidden;
+        height: 3px;
+        margin-top: 12px;
+        border-radius: 2px;
+        background: var(--line);
+      }
+      .bar::after {
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 35%;
+        border-radius: 2px;
+        background: var(--accent);
+        animation: slide 1.4s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(340%);
+        }
+      }
+      .elapsed {
+        margin-left: 7px;
+        font-variant-numeric: tabular-nums;
+        color: var(--dim);
+      }
+      .chip {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 5px 11px;
+        border: 1px solid var(--ok);
+        border-radius: 999px;
+        color: var(--ok);
+        font-size: 12px;
       }
       #backendWarning:empty {
         display: none;
@@ -290,6 +377,12 @@
           <button id="voiceRecord" class="ghost" type="button">● Record instead</button>
         </div>
         <audio id="voicePlayer" controls hidden></audio>
+        <!-- Persistent: what clip the page is holding. Separate from the status
+             line below, which is transient and gets overwritten by whatever
+             happens next -- so a confirmation written there vanishes in the
+             same tick it appears. -->
+        <div id="voiceSummary" class="chip" hidden></div>
+        <div id="voiceProgress" class="bar" hidden></div>
         <div id="voiceStatus" class="status"></div>
 
         <div id="consentBlock" hidden>
@@ -348,6 +441,7 @@
         <div class="row">
           <button id="speakButton" type="button">Speak</button>
         </div>
+        <div id="speakProgress" class="bar" hidden></div>
         <div id="speakStatus" class="status"></div>
         <audio id="outputPlayer" controls hidden></audio>
         <a id="downloadLink" download="mlvoice.wav" hidden>Download WAV</a>

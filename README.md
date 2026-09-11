@@ -241,6 +241,17 @@ uploaded. One code path covers a phone's `.m4a`, an `.mp3`, and the WebM/Opus a
 `MediaRecorder` produces, and the server needs no codec beyond libsndfile —
 server-side conversion would mean shipping ffmpeg in the image.
 
+**Nothing slow happens silently.** Transcription downloads a recogniser on its
+first run and synthesis takes about a minute per sentence on CPU, so every wait
+shows a spinner, an indeterminate bar and a seconds counter that keeps moving —
+`Generating… 47s` is visibly alive where `Generating…` reads as frozen. The bar
+is indeterminate because the server genuinely cannot say how far through a
+flow-matching generation it is; a fake percentage would be a lie that devalues
+every other number on the page. Buttons disable and relabel themselves while
+they work, a loaded clip is confirmed in its own element that the next step
+cannot overwrite, and a previous result is cleared before a new run so there is
+no chance of listening to the old take and calling it the new one.
+
 Behind a disclosure it also exposes `POST /v1/text/analyze`, so you can see the
 chunks and phonemes the model will be given before paying for a generation.
 
@@ -338,7 +349,7 @@ and no network. Tests that require weights are marked `slow` and excluded by
 default. `make test-browser` drives the web client in a real Chromium — those
 tests are marked `browser` and skip themselves when no browser is installed,
 so they never fail a contributor who does not want the download. Current state:
-**710 tests, 94% branch coverage**.
+**717 tests, 94% branch coverage**.
 
 ## What is honest about this
 

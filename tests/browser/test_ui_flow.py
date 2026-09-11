@@ -318,6 +318,54 @@ def page_simple(browser: Any, service_simple: str) -> Iterator[Any]:
     yield from _open(browser, service_simple)
 
 
+_SLOW_SECONDS: Final = 1.5
+
+
+@pytest.fixture(scope="module")
+def service_slow(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """A service whose synthesis takes long enough to observe.
+
+    The dummy backend returns in milliseconds, which is useless for testing
+    what the page shows *during* a request: the assertions race the response
+    and pass or fail by scheduling luck. Real synthesis takes about a minute,
+    so this reproduces the only property that matters -- that it is slow.
+    """
+    from mlvoice.api.app import Overrides, create_app
+    from mlvoice.config import Settings
+    from mlvoice.tts.base import SynthesisRequest
+    from mlvoice.tts.dummy import DummySynthesizer
+
+    class SlowSynthesizer(DummySynthesizer):
+        """The dummy backend, paced like the real one."""
+
+        def _synthesize_chunk(self, chunk_text: str, request: SynthesisRequest) -> Any:
+            time.sleep(_SLOW_SECONDS)
+            return super()._synthesize_chunk(chunk_text, request)
+
+    root = tmp_path_factory.mktemp("slow")
+    settings = Settings(
+        _env_file=None,
+        env="development",
+        api_keys="",
+        tts_backend="dummy",
+        asr_enabled=False,
+        require_consent=False,
+        database_url=f"sqlite:///{root}/mlvoice.db",
+        voice_storage_dir=root / "voices",
+        consent_signing_key="browser-test-consent-key",
+        watermark_key="browser-test-watermark-key",
+        log_level="WARNING",
+    )
+    app = create_app(Overrides(settings=settings, synthesizer=SlowSynthesizer()))
+    yield from _serve(app)
+
+
+@pytest.fixture
+def page_slow(browser: Any, service_slow: str) -> Iterator[Any]:
+    """A page whose generations are slow enough to watch."""
+    yield from _open(browser, service_slow)
+
+
 class TestPageLoads:
     def test_it_reports_the_backend_it_is_talking_to(self, page: Any) -> None:
         assert "dummy" in page.inner_text("#backendInfo")
@@ -477,3 +525,132 @@ class TestNothingIsShownBeforeItIsUsable:
             " return gone; }"
         )
         assert hidden, "setting .hidden on a .row does not hide it"
+
+
+class TestTheUserCanTellWhatIsHappening:
+    """Feedback during the slow operations.
+
+    Transcription downloads a recogniser on its first run and synthesis takes
+    about a minute per sentence on CPU. Both used to show one line of static
+    grey text, which is indistinguishable from a frozen page -- so the page
+    looked broken exactly when it was working hardest.
+
+    These run against ``page_slow``, whose backend is paced like the real one.
+    Racing the dummy backend's millisecond response would make the assertions
+    pass or fail by scheduling luck.
+    """
+
+    def _busy_state(self, page: Any, status: str, progress: str) -> dict[str, Any]:
+        return page.evaluate(
+            "([statusId, progressId]) => ({"
+            " text: document.getElementById(statusId).textContent,"
+            " busy: document.getElementById(statusId).className.includes('busy'),"
+            " spinners: document.querySelectorAll(`#${statusId} .spin`).length,"
+            " bar: !document.getElementById(progressId).hidden })",
+            arg=[status, progress],
+        )
+
+    def test_generating_shows_a_spinner_a_bar_and_a_running_clock(self, page_slow: Any) -> None:
+        page_slow.fill("#speakText", "ഒന്ന് രണ്ട് മൂന്ന് നാല് അഞ്ച്.")
+        page_slow.click("#speakButton")
+
+        state = self._busy_state(page_slow, "speakStatus", "speakProgress")
+        assert state["busy"], "the status is not marked busy"
+        assert state["spinners"] == 1, "no spinner while generating"
+        assert state["bar"], "no progress bar while generating"
+        assert "Generating" in state["text"]
+        assert "minute" in state["text"], "the expected duration is not stated"
+
+        # The counter is what distinguishes working from hung.
+        page_slow.wait_for_function(
+            "() => /\\d+s/.test(document.querySelector('#speakStatus .elapsed').textContent)",
+            timeout=5_000,
+        )
+
+        _settled(page_slow, "speakStatus", not_starting_with="Generating", timeout=60_000)
+        after = self._busy_state(page_slow, "speakStatus", "speakProgress")
+        assert not after["bar"], "the progress bar outlived the request"
+        assert not after["busy"]
+
+    def test_the_speak_button_cannot_be_clicked_twice(self, page_slow: Any) -> None:
+        """A second request during a slow one is how a queue forms."""
+        page_slow.fill("#speakText", "ഒന്ന് രണ്ട്.")
+        page_slow.click("#speakButton")
+        assert page_slow.locator("#speakButton").is_disabled()
+        assert "Generating" in page_slow.inner_text("#speakButton")
+
+        _settled(page_slow, "speakStatus", not_starting_with="Generating", timeout=60_000)
+        assert page_slow.locator("#speakButton").is_enabled()
+        assert page_slow.inner_text("#speakButton") == "Speak", (
+            "the button must return to its original label, not keep the busy one"
+        )
+
+    def test_a_loaded_clip_is_confirmed_and_stays_confirmed(
+        self, page_simple: Any, reference_wav: Path
+    ) -> None:
+        """The status line is transient -- it is about to say "Transcribing…" --
+        so the confirmation lives in its own element. Written to the status
+        line it vanished in the same tick it appeared, which is how "there is
+        no indication the upload worked" happens.
+        """
+        page_simple.set_input_files("#voiceFile", str(reference_wav))
+        page_simple.wait_for_selector("#voiceSummary:not([hidden])", timeout=15_000)
+        summary = page_simple.inner_text("#voiceSummary")
+        assert "reference.wav" in summary
+        assert "6.0s" in summary
+
+        # Whatever the next step says, the confirmation is still on screen.
+        _settled(page_simple, "voiceStatus", not_starting_with="Reading")
+        assert page_simple.locator("#voiceSummary").is_visible()
+        assert "reference.wav" in page_simple.inner_text("#voiceSummary")
+
+    def test_no_progress_bar_outlives_its_operation(
+        self, page_simple: Any, reference_wav: Path
+    ) -> None:
+        """Every exit from a busy state has to clear its bar, including the
+        early returns. One did not, and the voice card kept animating
+        indefinitely under a finished message -- which says "still working"
+        about something that has stopped.
+        """
+        page_simple.set_input_files("#voiceFile", str(reference_wav))
+        _settled(page_simple, "voiceStatus", not_starting_with="Reading")
+        assert page_simple.locator("#voiceProgress").is_hidden()
+        assert page_simple.locator("#speakProgress").is_hidden()
+
+    def test_the_elapsed_clock_stops_when_the_status_changes(self, page_slow: Any) -> None:
+        """A leaked interval would keep rewriting a finished status line."""
+        page_slow.fill("#speakText", "ഒന്ന്.")
+        page_slow.click("#speakButton")
+        _settled(page_slow, "speakStatus", not_starting_with="Generating", timeout=60_000)
+        settled = page_slow.inner_text("#speakStatus")
+        page_slow.wait_for_timeout(2_200)
+        assert page_slow.inner_text("#speakStatus") == settled
+
+    def test_a_previous_result_is_cleared_before_the_next_run(self, page_slow: Any) -> None:
+        """Leaving the old player visible during a new generation invites
+        listening to the previous take and calling it the new one."""
+        page_slow.fill("#speakText", "ഒന്ന്.")
+        page_slow.click("#speakButton")
+        _settled(page_slow, "speakStatus", not_starting_with="Generating", timeout=60_000)
+        assert page_slow.locator("#outputPlayer").is_visible()
+
+        page_slow.fill("#speakText", "രണ്ട്.")
+        page_slow.click("#speakButton")
+        assert page_slow.locator("#outputPlayer").is_hidden()
+        assert page_slow.locator("#downloadLink").is_hidden()
+
+    def test_the_text_preview_still_renders_its_line_breaks(self, page_simple: Any) -> None:
+        """The summary shares the .status class with the busy indicators, so a
+        flex container added for the spinner would lay its <br> breaks out
+        sideways."""
+        page_simple.fill("#speakText", "2025 ജനുവരി 5.")
+        _reveal(page_simple, "analysisDetails")
+        page_simple.click("#analyseButton")
+        page_simple.wait_for_selector("#analysisBody tr")
+        assert (
+            page_simple.evaluate(
+                "() => getComputedStyle(document.getElementById('analysisSummary')).display"
+            )
+            == "block"
+        )
+        assert page_simple.locator("#analysisSummary br").count() > 0
