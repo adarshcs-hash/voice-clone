@@ -66,6 +66,10 @@ nothing.
 Never write caller text through `innerHTML`. The preview echoes what the user
 typed back into the page; `textContent` and DOM construction only.
 
+The script's URL is fingerprinted with a hash of its contents, so never add a
+second script or stylesheet at a fixed URL: the page is the only asset served
+uncached, and anything else cached at a stable URL will go stale against it.
+
 Anything that takes more than a moment needs a spinner, a bar and a running
 seconds counter, and must clear all three on every exit path including early
 returns — a bar that outlives its operation says "still working" about

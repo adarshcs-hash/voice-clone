@@ -92,9 +92,17 @@ rather than 403, so a disabled console is indistinguishable from one that was
 never deployed. Consider that for an internet-facing deployment: the page is
 harmless, but it does advertise that this host clones voices.
 
-The page is served `no-store` and the script `max-age=3600`. That asymmetry is
-deliberate -- a cached page outliving a redeploy would bind element ids the new
-script no longer looks up, which fails as dead buttons rather than as an error.
+The page is served `no-store`; the script is immutable at a URL carrying a
+hash of its own contents, which the page names. An update therefore changes the
+script's URL and is picked up on the next load.
+
+The earlier arrangement -- uncached page, `max-age=3600` script at a fixed URL
+-- had the opposite of its intended effect. After an update a browser took the
+new HTML and kept the old script for up to an hour, binding handlers that no
+longer existed, and the page looked exactly as it had before. Someone who
+pulled a fix saw no change and concluded the fix had not worked. If a user
+reports that an update did nothing, check the script URL in the page source
+before looking anywhere else.
 
 ## Transcription and startup
 

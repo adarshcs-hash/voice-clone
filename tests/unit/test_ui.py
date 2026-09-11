@@ -191,6 +191,34 @@ class TestRoutes:
         """A cached page outlives a redeploy and desynchronises from the script."""
         assert client.get("/ui").headers["cache-control"] == "no-store"
 
+    def test_the_script_url_carries_a_content_hash(self, client: TestClient) -> None:
+        """This is the fix for a real failure: the page was uncached and the
+        script cached for an hour at a fixed URL, so after an update a browser
+        took the new HTML and kept the old script -- the page looked exactly as
+        it had before, and the update appeared not to have happened."""
+        from mlvoice.api.routes.ui import fingerprint
+
+        page = client.get("/ui").text
+        script = client.get("/ui/app.js").text
+        assert f'src="/ui/app.js?v={fingerprint(script)}"' in page
+
+    def test_the_hash_changes_when_the_script_does(self, client: TestClient) -> None:
+        from mlvoice.api.routes.ui import fingerprint
+
+        assert fingerprint("one") != fingerprint("two")
+        assert fingerprint("one") == fingerprint("one")
+
+    def test_the_script_is_cached_hard_because_its_url_is_versioned(
+        self, client: TestClient
+    ) -> None:
+        cache_control = client.get("/ui/app.js").headers["cache-control"]
+        assert "immutable" in cache_control
+        assert "max-age=31536000" in cache_control
+
+    def test_the_unversioned_script_url_still_serves(self, client: TestClient) -> None:
+        """A bookmark or a curl must not 404, and must get the same bytes."""
+        assert client.get("/ui/app.js").text == client.get("/ui/app.js?v=whatever").text
+
     def test_script_is_served_as_javascript(self, client: TestClient) -> None:
         response = client.get("/ui/app.js")
         assert response.status_code == 200
