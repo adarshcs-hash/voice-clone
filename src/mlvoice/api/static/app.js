@@ -504,8 +504,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (info.backend.backend === "dummy") {
       setStatus(
         "backendWarning",
-        "The dummy backend is loaded: output will be a synthetic buzz, not speech. " +
-          "Set MLVOICE_TTS_BACKEND=indicf5 for a real voice.",
+        "This is the dummy backend: it is a test signal generator, not a model, " +
+          "so anything you generate will be a buzz. Run `mlvoice doctor` to see " +
+          "why, or set MLVOICE_TTS_BACKEND=indicf5.",
         "warn",
       );
     }

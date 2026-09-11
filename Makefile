@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint fmt typecheck test test-all test-browser cov serve docker clean
+.PHONY: help install install-dev lint fmt typecheck test test-all test-browser cov doctor serve docker clean
 
 PY ?= .venv/bin/python
 PIP ?= .venv/bin/pip
@@ -41,6 +41,9 @@ cov: ## Coverage report
 	$(PY) -m pytest -m "not slow" --cov --cov-report=term-missing --cov-report=xml
 
 check: lint typecheck test ## Everything CI runs
+
+doctor: ## Check whether this install can actually synthesise speech
+	$(PY) -m mlvoice.cli doctor
 
 serve: ## Run the API locally with reload
 	$(PY) -m uvicorn mlvoice.api.app:create_app --factory --reload --port 8000

@@ -50,7 +50,23 @@ class Settings(BaseSettings):
     """Comma-separated API keys. Empty is only tolerated outside production."""
 
     # -- synthesis ----------------------------------------------------------
-    tts_backend: str = "dummy"
+    tts_backend: str = "indicf5"
+    """Which synthesiser to load.
+
+    The real one by default. It used to be ``dummy``, and that was a mistake
+    worth recording: ``dummy`` is a deterministic signal generator, not a
+    model, so a deployment that fell back to it produced a buzz that sounds
+    like broken audio rather than like a misconfiguration. Someone who copied
+    ``.env.example`` got a buzzing service and no reason to suspect the
+    setting.
+
+    Defaulting to the real backend makes the failure loud instead: without the
+    ``indicf5`` extra installed, startup raises
+    :class:`~mlvoice.errors.BackendUnavailableError` naming what to install.
+    A wrong error beats a wrong sound.
+
+    Tests and CI set ``dummy`` explicitly, which is the only place it belongs.
+    """
     model_id: str = "ai4bharat/IndicF5"
     model_revision: str | None = None
     """Pin the weights revision. Unpinned weights are refused in production."""

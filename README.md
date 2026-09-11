@@ -9,7 +9,8 @@ provenance enforced in code rather than in a policy document.
 make install-dev
 make check                      # lint, types, tests
 mlvoice eval frontend           # score the Malayalam text frontend, no GPU needed
-mlvoice serve                   # http://127.0.0.1:8000/docs
+mlvoice doctor                  # can this install actually synthesise speech?
+mlvoice serve                   # http://127.0.0.1:8000/ui
 ```
 
 ## Why this shape
@@ -281,6 +282,31 @@ commercial use — are in
 `license_id` and `commercial_use_permitted` on every row so a non-commercial
 dataset cannot silently end up in a commercial training run.
 
+## `mlvoice doctor`
+
+Before wondering why output sounds wrong, ask:
+
+```
+$ mlvoice doctor
+[warn] tts_backend: the dummy backend is configured: output is a synthetic buzz, not speech
+          → set MLVOICE_TTS_BACKEND=indicf5
+[FAIL] f5_tts: this is the f5-tts package from PyPI, not AI4Bharat's fork
+          → they share the import name but not the API; reinstall with pip install -e ".[indicf5]"
+[warn] device: running on cpu while mps is available
+          → set MLVOICE_DEVICE=mps; this model is several times faster there
+```
+
+It loads no model and makes no network call, and exits non-zero when something
+would stop synthesis working — so it belongs in a container build and in a
+pre-deploy step, not just in a terminal. `--production` applies production
+severities whatever `MLVOICE_ENV` says, which tells you what a rollout would
+refuse before you attempt it.
+
+Every check in it corresponds to a failure that has actually happened:
+`dummy` configured and buzzing, the wrong `f5_tts`, a `transformers` too new to
+load the model, weights not cached so the first request stalls on a download,
+`cpu` while an accelerator sits idle.
+
 ## Configuration
 
 Environment variables, `MLVOICE_` prefixed; see [`.env.example`](.env.example)
@@ -312,7 +338,7 @@ and no network. Tests that require weights are marked `slow` and excluded by
 default. `make test-browser` drives the web client in a real Chromium — those
 tests are marked `browser` and skip themselves when no browser is installed,
 so they never fail a contributor who does not want the download. Current state:
-**674 tests, 94% branch coverage**.
+**710 tests, 94% branch coverage**.
 
 ## What is honest about this
 

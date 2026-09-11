@@ -211,6 +211,9 @@ module = [
   "speechbrain.*",
   "jiwer.*",
   "audioseal.*",
+  # Installed from AI4Bharat's fork by the `indicf5` extra, absent from the
+  # environment that typechecks this.
+  "f5_tts.*",
 ]
 ignore_missing_imports = true
 

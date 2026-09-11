@@ -32,6 +32,26 @@ Failing at startup is deliberate. These are the invariants that make the system
 safe to run, and a deployment that quietly disabled one would look identical
 from the outside. The error names every problem at once, not just the first.
 
+## Before running it
+
+```bash
+mlvoice doctor              # will this process synthesise speech?
+mlvoice doctor --production # what would a production rollout refuse?
+```
+
+Loads no model, makes no network call, exits non-zero on anything that would
+stop synthesis working. Put it in the image build and in the pre-deploy step:
+every check in it maps to a failure that has happened in practice, and the ones
+that hurt most are the ones where the service starts and is simply wrong --
+the `dummy` backend buzzing instead of speaking, the PyPI `f5-tts` instead of
+AI4Bharat's fork, `transformers` too new to load the model, cold weight caches
+turning the first request into a multi-gigabyte download, `cpu` selected while
+an accelerator idles.
+
+`--production` applies production severities regardless of `MLVOICE_ENV`, so
+unpinned weights, missing keys and disabled consent read as failures before a
+rollout discovers them rather than during one.
+
 ## Running it
 
 ```bash

@@ -102,3 +102,65 @@ class TestExtraShape:
         core = " ".join(pyproject["project"]["dependencies"])
         for heavy in ("torch", "transformers", "f5_tts", "speechbrain"):
             assert heavy not in core, f"{heavy} must stay in an extra"
+
+
+class TestEnvExample:
+    """`.env.example` is copied verbatim by every new user, so a bad value in
+    it is a bug shipped to all of them.
+
+    This class exists because of one: the file set `MLVOICE_TTS_BACKEND=dummy`.
+    `dummy` is a deterministic signal generator, not a model, so everyone who
+    followed the README got a service that emitted a buzz -- which sounds like
+    broken audio, not like a setting, and gave no reason to suspect the
+    configuration.
+    """
+
+    @staticmethod
+    @pytest.fixture(scope="module")
+    def env_example() -> dict[str, str]:
+        text = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+        values: dict[str, str] = {}
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            values[key.strip()] = value.strip()
+        return values
+
+    def test_it_does_not_ship_the_dummy_backend(self, env_example: dict[str, str]) -> None:
+        assert env_example.get("MLVOICE_TTS_BACKEND") != "dummy", (
+            "the example config must not select the test backend: it produces a "
+            "buzz that reads as broken audio rather than as a misconfiguration"
+        )
+
+    def test_the_backend_it_selects_is_registered(self, env_example: dict[str, str]) -> None:
+        from mlvoice.tts.registry import available_backends
+
+        assert env_example["MLVOICE_TTS_BACKEND"] in set(available_backends())
+
+    def test_every_key_it_sets_is_a_real_setting(self, env_example: dict[str, str]) -> None:
+        """A typo in this file is silent: pydantic-settings ignores unknown
+        environment variables, so a misspelled key looks configured and is not.
+        """
+        from mlvoice.config import Settings
+
+        prefix = "MLVOICE_"
+        fields = set(Settings.model_fields)
+        unknown = [
+            key
+            for key in env_example
+            if key.startswith(prefix) and key[len(prefix) :].lower() not in fields
+        ]
+        assert not unknown, f"not settings: {unknown}"
+
+    def test_the_committed_example_is_a_startable_configuration(self) -> None:
+        """Parsed as-is, without the model runtime installed. Catches a value
+        that cannot even be coerced -- a blank path, an invalid device -- which
+        would otherwise surface as a crash on someone's first run.
+        """
+        from mlvoice.config import Settings
+
+        settings = Settings(_env_file=PROJECT_ROOT / ".env.example")
+        assert settings.env.value == "development"
+        assert settings.tts_backend != "dummy"

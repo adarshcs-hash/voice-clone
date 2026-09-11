@@ -102,6 +102,44 @@ def info() -> None:
 
 
 @app.command()
+def doctor(
+    json_output: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+    as_production: Annotated[
+        bool,
+        typer.Option(
+            "--production",
+            help="Apply production severities whatever MLVOICE_ENV says.",
+        ),
+    ] = False,
+) -> None:
+    """Check whether this process can actually synthesise speech.
+
+    Loads no model and makes no network call, so it is safe in a container
+    build or a pre-deploy step. Exits 1 if anything would stop synthesis
+    working, which is what makes it usable as a gate.
+    """
+    from mlvoice.config import get_settings
+    from mlvoice.diagnostics import Status, run_checks, worst_status
+
+    _configure(quiet=True)
+    checks = run_checks(get_settings(), as_production=as_production)
+    verdict = worst_status(checks)
+
+    if json_output:
+        _echo_json({"status": verdict.value, "checks": [check.as_dict() for check in checks]})
+    else:
+        marks = {Status.OK: "ok  ", Status.WARN: "warn", Status.FAIL: "FAIL"}
+        for check in checks:
+            typer.echo(f"[{marks[check.status]}] {check.name}: {check.detail}")
+            if check.hint:
+                typer.echo(f"          → {check.hint}")
+        typer.echo(f"\n{verdict.value}")
+
+    if verdict is Status.FAIL:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def serve(
     host: str = "127.0.0.1",
     port: int = 8000,

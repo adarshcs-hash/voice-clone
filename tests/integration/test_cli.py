@@ -56,6 +56,45 @@ class TestBasics:
         assert payload["test_set"]
 
 
+class TestDoctor:
+    """The command exists so "why is it buzzing?" has an answer that is not a
+    log file. Its exit code is the part tooling depends on."""
+
+    def test_it_names_the_dummy_backend(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["doctor"])
+        assert "dummy backend" in result.output
+        assert "MLVOICE_TTS_BACKEND=indicf5" in result.output
+
+    def test_it_exits_non_zero_on_a_failure(self, runner: CliRunner) -> None:
+        """Usable as a pre-deploy gate, which a report nobody reads is not."""
+        result = runner.invoke(app, ["doctor", "--production"])
+        assert result.exit_code == 1
+
+    def test_a_workable_development_setup_does_not_fail(self, runner: CliRunner) -> None:
+        """dummy is a warning locally, not an error: the suite and the API
+        contract are meant to run this way."""
+        result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert result.output.rstrip().endswith("warn")
+
+    def test_json_output_is_machine_readable(self, runner: CliRunner) -> None:
+        import json
+
+        result = runner.invoke(app, ["doctor", "--json"])
+        payload = json.loads(result.output)
+        assert payload["status"] in {"ok", "warn", "fail"}
+        assert any(check["check"] == "tts_backend" for check in payload["checks"])
+
+    def test_it_loads_no_model(self, runner: CliRunner) -> None:
+        """Safe in a container build and before a deploy, which means it must
+        not import a runtime or reach the network."""
+        import sys
+
+        result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "torch" not in sys.modules
+
+
 class TestTextCommands:
     def test_normalize(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["text", "normalize", "എൻറെ വീട്"])
