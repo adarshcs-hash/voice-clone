@@ -130,7 +130,7 @@ class IndicF5Synthesizer(Synthesizer):
         """Load the model from the hub. Idempotent.
 
         Raises:
-            BackendUnavailableError: The ``models`` extra is missing, or the
+            BackendUnavailableError: The ``indicf5`` extra is missing, or the
                 weights cannot be loaded.
         """
         if self._model is not None:
@@ -139,8 +139,13 @@ class IndicF5Synthesizer(Synthesizer):
             import torch
             from transformers import AutoModel
         except ImportError as exc:
+            # `indicf5`, not `models`. The model's bundled remote code also
+            # imports f5_tts and pydub, so `models` alone gets past this line
+            # and fails on the next one -- sending a new user through two
+            # install steps to reach one working state.
             raise BackendUnavailableError(
-                "IndicF5 requires the 'models' extra: pip install 'mlvoice[models]'"
+                "IndicF5 is not installed: pip install -e '.[indicf5]'",
+                hint="run `mlvoice doctor` to see everything that is missing at once",
             ) from exc
 
         if self._revision is None:

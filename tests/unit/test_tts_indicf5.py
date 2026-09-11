@@ -135,13 +135,20 @@ class TestLoadFailures:
         assert excinfo.value.context["model_id"] == "org/model"
         assert excinfo.value.context["revision"] == "rev1"
 
-    def test_missing_extra_is_reported_clearly(self) -> None:
-        """Without the models extra, the import itself fails."""
+    def test_missing_extra_names_the_extra_that_is_actually_enough(self) -> None:
+        """It must say `indicf5`, not `models`.
+
+        The model's bundled remote code imports f5_tts and pydub too, so
+        `models` alone gets past this import and fails on the next one -- which
+        walks a new user through two install steps to reach one working state.
+        """
         with (
             patch.dict(sys.modules, {"torch": None, "transformers": None}),
-            pytest.raises(BackendUnavailableError, match="models"),
+            pytest.raises(BackendUnavailableError) as raised,
         ):
             IndicF5Synthesizer().load()
+        assert "[indicf5]" in raised.value.message
+        assert "[models]" not in raised.value.message
 
 
 class TestLoadArguments:

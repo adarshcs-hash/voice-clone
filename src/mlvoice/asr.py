@@ -137,7 +137,8 @@ class TransformersTranscriber:
             from transformers import pipeline
         except ImportError as exc:
             raise BackendUnavailableError(
-                "transcription requires the 'models' extra: pip install 'mlvoice[models]'"
+                "transcription requires the model runtime: pip install -e '.[models]'",
+                hint="run `mlvoice doctor` to see everything that is missing at once",
             ) from exc
 
         # Logged *before* the call, not after. On a cold cache this line is
