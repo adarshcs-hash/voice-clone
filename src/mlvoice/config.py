@@ -77,6 +77,11 @@ class Settings(BaseSettings):
 
     # -- transcription ------------------------------------------------------
     asr_enabled: bool = True
+    """Transcribe a reference clip when no transcript is supplied.
+
+    Without this, a caller must type the transcript of their own recording,
+    which is both poor product and the main source of bad clones: a wrong
+    transcript clones the voice correctly and garbles the words."""
     asr_eager_load: bool = False
     """Load the recogniser during startup rather than on first use.
 
@@ -92,14 +97,13 @@ class Settings(BaseSettings):
     Turn it on where a slow first request is worse than a slow rollout: a
     production replica behind a readiness probe, which is why production with
     consent enabled loads eagerly regardless of this setting."""
-    """Transcribe a reference clip when no transcript is supplied.
+    asr_model_id: str = "thennal/whisper-medium-ml"
+    """Recognition model.
 
-    Without this, a caller must type the transcript of their own recording,
-    which is both poor product and the main source of bad clones: a wrong
-    transcript clones the voice correctly and garbles the words."""
-    asr_model_id: str = "openai/whisper-large-v3"
-    """Recogniser for reference clips. An Indic-specific model is materially
-    better on Malayalam; see :mod:`mlvoice.asr` for candidates."""
+    A Malayalam-only fine-tune by default, not multilingual Whisper. Handed a
+    real Malayalam clip, ``openai/whisper-large-v3`` transcribed it into
+    Devanagari and then looped -- a model trained on one language cannot do
+    that. See :mod:`mlvoice.asr` for the alternatives and the reasoning."""
     asr_revision: str | None = None
     asr_language: str | None = "ml"
     """Language hint. Whisper detects Malayalam unreliably on the short clips

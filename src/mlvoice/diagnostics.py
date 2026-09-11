@@ -299,8 +299,8 @@ def _check_transcription(settings: Settings) -> Iterator[Check]:
         "transcription",
         Status.WARN,
         f"{settings.asr_model_id} is not in the local cache",
-        "the first transcription will download it, which for whisper-large-v3 "
-        "is about 3 GB; openai/whisper-small is ~480 MB if that is too slow",
+        "the first transcription will download it; thennal/whisper-small-ml-imasc "
+        "is a smaller Malayalam alternative if the wait matters",
     )
 
 

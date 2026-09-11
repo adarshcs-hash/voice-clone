@@ -152,7 +152,21 @@ class TranscribeResponse(BaseModel):
     correctly while garbling the words.
     """
 
-    text: str
+    text: str = Field(
+        description=(
+            "The recognised text, or empty when recognition produced something "
+            "unusable. Never a best-effort guess: this value is fed to the "
+            "synthesiser as the reference transcript, where a wrong one "
+            "corrupts the clone while looking like a filled-in field."
+        )
+    )
+    usable: bool = Field(
+        default=True,
+        description=(
+            "False when the transcript was discarded. `advisories` says why, "
+            "and the caller should ask the user to type the sentence instead."
+        ),
+    )
     duration_seconds: float
     transcriber: str
     quality: dict[str, float] = Field(

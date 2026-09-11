@@ -168,6 +168,48 @@ class TestTranscription:
         assert body["quality"]["estimated_snr_db"] > 0
         assert body["transcriber"]
 
+    def test_an_unusable_transcript_is_withheld_rather_than_prefilled(
+        self,
+        settings: Settings,
+        transcriber: FakeTranscriber,
+        auth: dict[str, str],
+        reference_bytes: bytes,
+    ) -> None:
+        """Real regression. A Malayalam clip came back from whisper-large-v3 in
+        Devanagari, looping one word to the token limit, and the endpoint handed
+        it over as the transcript. That text becomes the synthesiser's
+        ``ref_text``, so it does not degrade the output gently -- it clones the
+        voice accurately and makes it say something else, with nothing on screen
+        to suggest anything is wrong.
+        """
+        from mlvoice.api.app import Overrides, create_app
+
+        transcriber.text = "वरण पालवरण वरण वरण वरण वरण वरण वरण वरण वरण"
+        app = create_app(Overrides(settings=settings, transcriber=transcriber))
+        with TestClient(app) as client:
+            body = client.post(
+                "/v1/transcribe",
+                files={"audio": ("ref.wav", reference_bytes, "audio/wav")},
+                headers=auth,
+            ).json()
+
+        assert body["usable"] is False
+        assert body["text"] == "", "an untrusted transcript must not be returned as text"
+        assert body["advisories"], "the caller has to be told why it was withheld"
+        assert any("Malayalam" in advisory for advisory in body["advisories"])
+        # Still a successful measurement of the clip: the audio was fine.
+        assert body["duration_seconds"] > 0
+
+    def test_a_good_transcript_is_marked_usable(
+        self, transcribing_client: TestClient, auth: dict[str, str], reference_bytes: bytes
+    ) -> None:
+        body = transcribing_client.post(
+            "/v1/transcribe",
+            files={"audio": ("ref.wav", reference_bytes, "audio/wav")},
+            headers=auth,
+        ).json()
+        assert body["usable"] is True
+
     def test_enrolment_without_a_transcript_transcribes(
         self, transcribing_client: TestClient, auth: dict[str, str], reference_bytes: bytes
     ) -> None:

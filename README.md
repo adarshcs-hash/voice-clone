@@ -225,6 +225,18 @@ a file picker and a text box — no key field, no consent step, no enrol button.
 Every field on screen is one the user has to think about, so a field the server
 would ignore is worse than no field at all.
 
+**A transcript the recogniser got wrong is withheld, not shown.** Recognition
+output is checked before anything uses it, because the reference transcript is
+fed to the synthesiser as `ref_text`: a wrong one does not degrade the output
+gently, it clones the voice faithfully and makes it say something else. Two
+failures are caught — output in the wrong script (multilingual Whisper handed
+Malayalam speech can return Devanagari) and decoder loops (one word repeated to
+the token limit). Either one comes back as `usable: false` with an empty `text`
+and a reason, and the page asks the user to type the sentence rather than
+prefilling something they have no way to distrust. The default recogniser is a
+Malayalam-only fine-tune for the same reason: a model trained on one language
+cannot emit the wrong script.
+
 **The reference transcript is transcribed, not typed.** Cloning needs to know
 what the reference clip *says*, and asking a user to type that out is both a bad
 first impression and the source of the worst failure this system has: type the
@@ -349,7 +361,7 @@ and no network. Tests that require weights are marked `slow` and excluded by
 default. `make test-browser` drives the web client in a real Chromium — those
 tests are marked `browser` and skip themselves when no browser is installed,
 so they never fail a contributor who does not want the download. Current state:
-**717 tests, 94% branch coverage**.
+**733 tests, 94% branch coverage**.
 
 ## What is honest about this
 

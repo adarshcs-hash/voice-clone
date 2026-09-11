@@ -264,8 +264,26 @@ async function transcribeReference({ thenEnrol = false } = {}) {
   try {
     const response = await request("/v1/transcribe", { method: "POST", body: form });
     const body = await response.json();
-    $("referenceText").value = body.text;
     clearProgress("voiceProgress");
+
+    /* The server refuses to hand over a transcript it does not trust -- the
+     * wrong script, or a decoder loop -- because this text is what the
+     * synthesiser is conditioned on. Prefilling it would be worse than leaving
+     * it blank: the user has no way to know it is wrong, and a wrong reference
+     * transcript clones the voice accurately and makes it say something else. */
+    if (body.usable === false) {
+      $("voiceAdvanced").open = true;
+      const why = (body.advisories || [])[0] || "the recogniser produced unusable output";
+      setStatus(
+        "voiceStatus",
+        `Could not transcribe this clip: ${why}. Type what it says under Details, ` +
+          "then press Use this voice.",
+        "warn",
+      );
+      return;
+    }
+
+    $("referenceText").value = body.text;
     setStatus("voiceStatus", `Transcribed ${body.duration_seconds.toFixed(1)}s of speech.`, "ok");
     if (thenEnrol) await enrol();
   } catch (error) {

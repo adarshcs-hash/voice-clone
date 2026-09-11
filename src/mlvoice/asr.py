@@ -11,36 +11,47 @@ Transcribing the clip removes the question. The right interaction is to
 transcribe, *show* the result, and let the user correct it: ASR is not perfect
 either, but a visible approximate transcript beats an invisible wrong one.
 
-Model choice matters
---------------------
-For Malayalam, an Indic-specific recogniser is materially better than general
-multilingual Whisper. Candidates, best first:
+Model choice matters, and general Whisper is not good enough
+------------------------------------------------------------
+This is not a tuning preference. Handed a 9.5-second Malayalam clip,
+``openai/whisper-large-v3`` returned **Devanagari** -- it recognised Indic
+phonology and chose the wrong writing system -- and then looped one word until
+it ran out of tokens. The output was not approximately right; it was a
+different script repeated sixty times, and because a reference transcript is
+fed to the synthesiser as ``ref_text``, using it would have cloned the voice
+faithfully and made it say gibberish.
 
+So the default is a Malayalam-only fine-tune. A model trained on one language
+cannot emit the wrong script, which removes the failure mode rather than
+mitigating it. Candidates:
+
+``thennal/whisper-medium-ml`` (default)
+    ``openai/whisper-medium`` fine-tuned on Malayalam. Reported as the
+    strongest Malayalam Whisper model on Common Voice.
+``thennal/whisper-large-v2-ml``
+    The same lineage at large-v2 scale, fine-tuned on the ICFOSS Malayalam
+    Speech Corpus. Better, and roughly twice the download.
+``thennal/whisper-small-ml-imasc``
+    Small and Malayalam-specific. The one to reach for when the download or
+    the latency of the others is the binding constraint.
 ``ai4bharat/indic-conformer-600m-multilingual``
-    AI4Bharat's IndicConformer. Trained for Indian languages, Malayalam
-    included. Needs ``trust_remote_code``.
-``vasista22/whisper-malayalam-medium``
-    Malayalam-specific Whisper fine-tune.
+    AI4Bharat's IndicConformer, trained across Indian languages. Needs
+    ``trust_remote_code``, which is why it is not the default.
 ``openai/whisper-large-v3``
-    Supports Malayalam and is ungated and dependable, but noticeably weaker on
-    it than the above. A reasonable default when nothing else is configured.
-``openai/whisper-small``
-    Fast, and weak enough on Malayalam that it should be treated as a smoke
-    test rather than a transcriber.
+    Multilingual and dependable to *load*, but see above: on Malayalam it is
+    capable of producing another script entirely. Not recommended here.
 
-The two community fine-tunes are named from the model hubs' Malayalam ASR
-listings and have not been benchmarked here; treat their ordering as a starting
-point for your own measurement, not as a result. Confirm an id resolves before
-depending on it -- a wrong one surfaces as a load failure, which is loud, but
-only once something tries to transcribe.
+None of these have been benchmarked in this repository. Their ordering comes
+from the published evaluations and should be treated as a starting point for
+your own measurement.
 
-The model id is configuration, not code, because which of these is best will
-change and because the right answer depends on whether accuracy or latency
-matters more for a given deployment.
+Whichever is configured, :func:`assess_transcript` checks the output before
+anything uses it, because "pick a better model" is not a guarantee.
 """
 
 from __future__ import annotations
 
+import itertools
 from typing import Any, Final
 
 from mlvoice.audio.io import Audio, resample
@@ -49,12 +60,94 @@ from mlvoice.errors import BackendUnavailableError
 from mlvoice.logging import get_logger
 from mlvoice.protocols import Transcriber
 
-__all__ = ["ASR_MODEL_SAMPLE_RATE", "TransformersTranscriber", "build_transcriber"]
+__all__ = [
+    "ASR_MODEL_SAMPLE_RATE",
+    "TransformersTranscriber",
+    "assess_transcript",
+    "build_transcriber",
+]
 
 log = get_logger(__name__)
 
 ASR_MODEL_SAMPLE_RATE: Final = 16_000
 """Whisper and the wav2vec2/conformer families all expect 16 kHz."""
+
+_DECODING_GUARDS: Final[dict[str, Any]] = {
+    # Whisper's documented repetition failure: each window is conditioned on
+    # the previous window's tokens, so once the decoder starts repeating a
+    # phrase it keeps being fed its own loop and never escapes. Turning the
+    # conditioning off costs a little cross-window coherence and removes the
+    # failure mode where a ten-second clip transcribes as one word sixty times.
+    "condition_on_prev_tokens": False,
+}
+
+_REPETITION_LIMIT: Final = 4
+"""Consecutive identical words tolerated before the output is called a loop."""
+
+_MIN_DISTINCT_RATIO: Final = 0.35
+"""Below this share of distinct words, a transcript is degenerate, not terse."""
+
+_LOOP_FLOOR: Final = 8
+"""Word count under which the ratio test is not meaningful."""
+
+
+def assess_transcript(text: str, *, expect_malayalam: bool = True) -> list[str]:
+    """Report why ``text`` should not be trusted as a reference transcript.
+
+    Recognition output is not merely sometimes inaccurate; it fails in two
+    specific ways that make it *worse than nothing* here, because the
+    transcript is fed to the synthesiser as ``ref_text``:
+
+    *   **The wrong script.** A multilingual model handed Malayalam speech can
+        return Devanagari -- it heard Indic phonology and picked the wrong
+        writing system. The words are not merely misspelled, they are not
+        Malayalam, and conditioning the model on them corrupts the clone.
+    *   **A decoder loop.** The same word or phrase repeated to the end of the
+        output. Recognisable instantly by eye and, without a check, passed on
+        as though it were a transcript.
+
+    Both are returned as human-readable reasons rather than raised, because the
+    caller's correct response is not to fail: it is to leave the field empty,
+    say what happened, and let the user type the sentence.
+
+    Args:
+        text: Recognised text.
+        expect_malayalam: Whether Malayalam script is the expected output.
+
+    Returns:
+        One message per problem found; empty when the transcript looks usable.
+    """
+    from mlvoice.text.chars import is_malayalam
+
+    stripped = text.strip()
+    if not stripped:
+        return ["recognition returned nothing"]
+
+    problems: list[str] = []
+    letters = [ch for ch in stripped if ch.isalpha()]
+    if expect_malayalam and letters and not any(is_malayalam(ch) for ch in letters):
+        problems.append(
+            "the transcript contains no Malayalam script, so the recogniser "
+            "transcribed this clip into the wrong writing system"
+        )
+
+    words = stripped.split()
+    run = 1
+    longest_run = 1
+    for previous, current in itertools.pairwise(words):
+        run = run + 1 if current == previous else 1
+        longest_run = max(longest_run, run)
+    if longest_run > _REPETITION_LIMIT:
+        problems.append(
+            f"one word repeats {longest_run} times in a row, which is a "
+            "recogniser loop rather than speech"
+        )
+    elif len(words) >= _LOOP_FLOOR and len(set(words)) / len(words) < _MIN_DISTINCT_RATIO:
+        problems.append(
+            f"only {len(set(words))} distinct words in {len(words)}, which is a "
+            "recogniser loop rather than speech"
+        )
+    return problems
 
 
 def build_transcriber(settings: Settings) -> Transcriber | None:
@@ -184,21 +277,29 @@ class TransformersTranscriber:
         assert self._pipeline is not None
 
         working = resample(audio, ASR_MODEL_SAMPLE_RATE)
-        kwargs: dict[str, Any] = {}
-        if self._language is not None:
-            # Whisper takes the hint through generate_kwargs; models that do not
-            # accept it raise, so a failure here falls back to detection rather
-            # than failing the request.
-            kwargs["generate_kwargs"] = {"language": self._language}
-
         payload = {"raw": working.samples, "sampling_rate": working.sample_rate}
+        generate: dict[str, Any] = dict(_DECODING_GUARDS)
+        if self._language is not None:
+            generate["language"] = self._language
+            # Without this, a multilingual model is free to *translate* rather
+            # than transcribe, and the output arrives in another language
+            # entirely -- which reads as a broken recogniser rather than as a
+            # missing argument.
+            generate["task"] = "transcribe"
+
         try:
-            result = self._pipeline(payload, **kwargs)
+            result = self._pipeline(payload, generate_kwargs=generate)
         except (TypeError, ValueError) as exc:
+            # Some architectures accept none of this. Retrying bare is better
+            # than failing, but the retry has no language pinned, so its output
+            # may come back in whatever script the model guessed -- which is
+            # why the caller is told the hint was lost rather than being handed
+            # a transcript that silently means something else.
             log.warning(
-                "transcriber rejected the language hint; retrying with detection",
+                "transcriber rejected the decoding options; retrying without them",
                 model_id=self._model_id,
                 reason=str(exc),
+                consequence="language is auto-detected for this transcript",
             )
             result = self._pipeline(payload)
 

@@ -77,12 +77,22 @@ class TestTranscription:
         """Whisper detects Malayalam unreliably on clips this short."""
         with patch.dict(sys.modules, _stubs(self._transcriber(recorded))):
             TransformersTranscriber(language="ml").transcribe(clip)
-        assert recorded["call_kwargs"]["generate_kwargs"] == {"language": "ml"}
+        generate = recorded["call_kwargs"]["generate_kwargs"]
+        assert generate["language"] == "ml"
+        # Without an explicit task a multilingual model may translate rather
+        # than transcribe, and the output arrives in another language.
+        assert generate["task"] == "transcribe"
+        # Whisper conditions each window on the previous window's tokens, so a
+        # decoder that starts repeating keeps being fed its own loop.
+        assert generate["condition_on_prev_tokens"] is False
 
     def test_language_hint_can_be_omitted(self, recorded: dict[str, Any], clip: Audio) -> None:
         with patch.dict(sys.modules, _stubs(self._transcriber(recorded))):
             TransformersTranscriber(language=None).transcribe(clip)
-        assert recorded["call_kwargs"] == {}
+        generate = recorded["call_kwargs"]["generate_kwargs"]
+        assert "language" not in generate
+        assert "task" not in generate, "a task without a language is not meaningful"
+        assert generate["condition_on_prev_tokens"] is False
 
     def test_a_model_rejecting_the_hint_falls_back_to_detection(self, clip: Audio) -> None:
         """Not every recogniser accepts generate_kwargs; failing the request
@@ -250,3 +260,87 @@ class TestStartupLoading:
         )
         with pytest.raises(ConfigurationError):
             _load_transcriber(self.RecordingTranscriber(fails=True), production)
+
+
+class TestAssessTranscript:
+    """Recognition output that is worse than nothing.
+
+    The reference transcript is fed to the synthesiser as ``ref_text``, so a
+    wrong one does not degrade gracefully -- it clones the voice accurately
+    and makes it say something else. Two failures produce that, both of them
+    obvious to a human and invisible to the caller unless something checks.
+
+    The Devanagari sample below is real output: a 9.5-second Malayalam clip
+    through `openai/whisper-large-v3`, which heard Indic phonology, chose the
+    wrong writing system, and then looped until it ran out of tokens.
+    """
+
+    DEVANAGARI_LOOP = (
+        "विलिच्छु वरटर्त अवनारीम अर्जिन अभाईयून्न वरण पालवरण विलिच्छु वरटर्त "
+        "अवनारीम अर्जिन अभाईयून्न वरण पालवरण विलिच्छु वरण पालवरण विलिच्छु वरण "
+        "वरण वरण वरण वरण वरण वरण वरण वरण वरण वरण वरण वरण"
+    )
+
+    def test_the_real_failure_is_caught(self) -> None:
+        from mlvoice.asr import assess_transcript
+
+        problems = assess_transcript(self.DEVANAGARI_LOOP)
+        assert problems, "the exact output that shipped to a user must not pass"
+        assert any("Malayalam" in problem for problem in problems)
+
+    def test_the_wrong_script_is_named(self) -> None:
+        from mlvoice.asr import assess_transcript
+
+        problems = assess_transcript("यह हिंदी में है")
+        assert len(problems) == 1
+        assert "wrong writing system" in problems[0]
+
+    def test_a_repeated_word_is_a_loop(self) -> None:
+        from mlvoice.asr import assess_transcript
+
+        problems = assess_transcript("വരണ വരണ വരണ വരണ വരണ വരണ")
+        assert any("loop" in problem for problem in problems)
+
+    def test_low_variety_over_a_long_output_is_a_loop(self) -> None:
+        """The loop that alternates rather than repeats adjacently."""
+        from mlvoice.asr import assess_transcript
+
+        problems = assess_transcript("ഒന്ന് രണ്ട് ഒന്ന് രണ്ട് ഒന്ന് രണ്ട് ഒന്ന് രണ്ട് ഒന്ന് രണ്ട്")
+        assert any("distinct" in problem for problem in problems)
+
+    def test_ordinary_malayalam_passes(self) -> None:
+        from mlvoice.asr import assess_transcript
+
+        assert assess_transcript("ഇത് എന്റെ ശബ്ദ സാമ്പിൾ ആണ്, ഇവിടെ പരീക്ഷിക്കുന്നു") == []
+
+    def test_a_short_repetition_is_not_a_loop(self) -> None:
+        """Malayalam reduplicates for emphasis; three in a row is speech."""
+        from mlvoice.asr import assess_transcript
+
+        assert assess_transcript("വേഗം വേഗം വേഗം വരൂ") == []
+
+    def test_a_short_transcript_is_not_judged_on_variety(self) -> None:
+        """Two words cannot be measured for variety without calling every
+        terse transcript a loop."""
+        from mlvoice.asr import assess_transcript
+
+        assert assess_transcript("നന്ദി") == []
+
+    def test_empty_is_reported(self) -> None:
+        from mlvoice.asr import assess_transcript
+
+        assert assess_transcript("   ") == ["recognition returned nothing"]
+
+    def test_code_mixed_english_in_malayalam_passes(self) -> None:
+        """Real speech mixes scripts; only the total absence of Malayalam is a
+        wrong-script signal."""
+        from mlvoice.asr import assess_transcript
+
+        assert assess_transcript("ഞങ്ങളുടെ Instagram പേജ് follow ചെയ്യൂ") == []
+
+    def test_the_script_check_can_be_turned_off(self) -> None:
+        """A deployment configured for another language must not have its
+        transcripts rejected for not being Malayalam."""
+        from mlvoice.asr import assess_transcript
+
+        assert assess_transcript("this is english", expect_malayalam=False) == []

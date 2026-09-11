@@ -31,14 +31,17 @@ from mlvoice.api.schemas import (
     VoiceResponse,
     WatermarkResponse,
 )
+from mlvoice.asr import assess_transcript
 from mlvoice.audio.io import load_audio
 from mlvoice.audio.quality import measure_quality
 from mlvoice.errors import ValidationError
+from mlvoice.logging import get_logger
 from mlvoice.tts.base import ReferencePrompt
 from mlvoice.voices.enrollment import EnrollmentRequest, EnrollmentService
 from mlvoice.voices.store import Voice, VoiceStatus, VoiceStore
 
 router = APIRouter(tags=["voices"])
+log = get_logger(__name__)
 
 _CHALLENGE_TTL_SECONDS = 3600
 _MAX_UPLOAD_BYTES = 32 * 1024 * 1024
@@ -186,18 +189,33 @@ async def transcribe(
     data = await _read_upload(audio, "audio")
     clip = load_audio(data, target_sample_rate=settings.sample_rate)
 
-    text = transcriber.transcribe(clip)
-    prompt_advisories: list[str] = []
-    if text.strip():
-        prompt_advisories = list(
-            ReferencePrompt(audio=clip, text=text, voice_id="preview").advisories()
+    recognised = transcriber.transcribe(clip)
+    # A transcript in the wrong script, or a decoder loop, is worse than no
+    # transcript at all: it is fed to the synthesiser as ref_text, so it
+    # corrupts the clone while looking like a filled-in field. Report it as
+    # unusable and return nothing in `text`, rather than handing the caller
+    # something they have no reason to distrust.
+    problems = assess_transcript(recognised, expect_malayalam=settings.asr_language == "ml")
+    usable = not problems
+    advisories = list(problems)
+    if usable:
+        advisories.extend(
+            ReferencePrompt(audio=clip, text=recognised, voice_id="preview").advisories()
+        )
+    else:
+        log.warning(
+            "discarded an unusable transcript",
+            transcriber=getattr(transcriber, "name", "unknown"),
+            problems=problems,
+            recognised=recognised[:200],
         )
     return TranscribeResponse(
-        text=text,
+        text=recognised if usable else "",
+        usable=usable,
         duration_seconds=round(clip.duration_seconds, 3),
         transcriber=getattr(transcriber, "name", "unknown"),
         quality=measure_quality(clip).as_dict(),
-        advisories=prompt_advisories,
+        advisories=advisories,
     )
 
 
